@@ -1,0 +1,14 @@
+{
+  "name": "ecc-vsdd",
+  "description": "VSDD 思想に基づく仕様駆動開発ワークフロープラグインのマーケットプレイス",
+  "owner": {
+    "name": "sc30gsw"
+  },
+  "plugins": [
+    {
+      "name": "ecc-vsdd",
+      "source": "./",
+      "description": "VSDD ワークフロー（9 フェーズ + 承認ゲート）— 検証型仕様駆動開発ワークフロー"
+    }
+  ]
+}

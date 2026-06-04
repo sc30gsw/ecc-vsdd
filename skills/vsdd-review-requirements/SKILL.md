@@ -1,0 +1,220 @@
+# Skill: vsdd-review-requirements
+
+## Invocation
+
+```
+/vsdd-review-requirements <slug>
+```
+
+**Arguments:**
+
+- `<slug>` — kebab-case feature identifier matching an existing `.claude/specs/<slug>/` directory
+
+---
+
+## Purpose
+
+Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, and missing edge cases. Writes a structured "Requirements Review" file to `.claude/specs/<slug>/review-results/requirement-review.md`. The mode is read from `progress.md` and determines which agents are invoked and which checks are run.
+
+---
+
+## Execution Steps
+
+### Step 1: Read mode and validate prerequisites
+
+Read `.claude/specs/<slug>/progress.md`:
+
+- Extract `**Mode**:` value (`standard` or `auto`).
+- Check that `vsdd-requirements` phase is marked `✅ complete`. If not, abort and instruct the user to run `/vsdd-requirements <slug>` first.
+- If `progress.md` does not exist, abort and instruct the user to run `/vsdd-init <slug>` first.
+- Create `.claude/specs/<slug>/review-results/` directory if it does not exist.
+
+### Step 2: Load requirements.md
+
+Read `.claude/specs/<slug>/requirements.md` in full.
+
+- If the file contains only the placeholder comment (`<!-- Artifact not yet generated... -->`), abort and instruct the user to run `/vsdd-requirements <slug>` first.
+- Count the number of REQ blocks for the review summary.
+
+### Step 3: Mode-specific review execution
+
+#### Standard Mode
+
+Invoke the following in sequence:
+
+1. **`requirements-analyst` agent** (primary)
+   - Focus: EARS compliance, acceptance criteria quality, stakeholder roles, ambiguity detection.
+   - Prompt: "Review the following requirements.md for EARS format compliance, ambiguous terms, missing acceptance criteria, and untestable criteria. Return a structured list of findings with REQ ID, issue description, severity, and suggested correction."
+
+2. **`ecc:planner` agent** (secondary)
+   - Focus: Scope boundaries, dependency risks, missing scenarios, implementation sequencing concerns.
+   - Prompt: "Review the following requirements for missing edge cases, scope gaps, inter-requirement conflicts, and sequencing risks. Return findings with REQ ID and impact."
+
+3. **`ecc:docs-lookup` agent** (stack documentation gathering)
+   - Focus: Fetch current documentation for each technology listed in `.claude/specs/_steering/tech.md` §1 Stack that is relevant to the requirements under review.
+   - Output: a summary of stack capabilities and known constraints to pass to the next agent.
+
+4. **`ecc:architect` agent** (technical feasibility judgment)
+   - Focus: Using the stack documentation gathered above, validate that each REQ is feasible. Flag any REQ whose acceptance criteria would require capabilities not supported by the stack, or would require significant architectural changes.
+   - Prompt: "Given the following stack documentation and requirements, identify any feasibility risks, missing architectural considerations, or REQs that would require significant changes to the current architecture."
+
+Merge all findings into a unified table.
+
+#### Auto Mode
+
+Invoke only:
+
+1. **`requirements-analyst` agent**
+   - Focus: Business clarity, acceptance criteria completeness, stakeholder roles, ambiguity, risks.
+   - Do NOT run the `ecc:planner` agent, `ecc:docs-lookup` agent, or `ecc:architect` agent.
+   - Prioritize findings that a non-engineer product owner can act on directly.
+
+---
+
+## Checks Performed
+
+Run all checks below regardless of mode. Flag each finding with the REQ ID and severity.
+
+### Check 1: EARS Format Compliance
+
+- Each REQ block must contain: a User Story, a `When ... the system shall ...` clause, and at least 2 Acceptance Criteria.
+- Missing any element → **HIGH**
+- Using EARS keywords incorrectly (e.g. "Where" used instead of "When" for event-driven behavior) → **MEDIUM**
+
+### Check 2: Ambiguous Terms
+
+Scan all requirement text for vague qualifiers. Flag occurrences as **MEDIUM**:
+
+- Adjectives: "fast", "slow", "easy", "simple", "appropriate", "reasonable", "sufficient"
+- Quantities: "some", "many", "few", "several", "various", "etc.", "and so on"
+- Time: "soon", "quickly", "immediately" (unless a specific duration is given)
+- Replace suggestion: "Replace with a measurable criterion (e.g. 'within 2 seconds', 'up to 100 items')."
+
+### Check 3: Missing Elements
+
+- Missing actor (role) in User Story → **HIGH**
+- Missing triggering event (When clause) → **HIGH**
+- Missing system response (shall clause) → **HIGH**
+- Requirement describes implementation, not behavior (e.g. "the database will store...") → **MEDIUM**
+
+### Check 4: Testability
+
+- Each Acceptance Criterion must be binary (pass/fail) and observable without access to internals.
+- Subjective criteria ("looks good", "feels intuitive") → **HIGH**
+- Criteria requiring knowledge of internal state not exposed to users → **MEDIUM**
+
+### Check 5: Completeness
+
+- No obvious error paths covered (e.g. what happens when an API call fails) → **MEDIUM**
+- No empty state handling (e.g. what the user sees when the list is empty) → **MEDIUM**
+- No permission / role boundary specified when the feature involves restricted access → **HIGH**
+- No pagination or data limit stated for list-type features → **LOW**
+
+### Check 6: REQ ID Numbering
+
+- IDs must be sequential with no gaps → **LOW**
+- Duplicate IDs → **HIGH**
+
+### Check 7: Technical Feasibility (Standard mode only)
+
+- REQ requiring a non-existent API endpoint or interface → **HIGH**
+- REQ assuming a capability (e.g. real-time push, background processing) not present in `tech.md` §1 Stack → **MEDIUM**
+- REQ whose acceptance criteria would require bypassing the project's validation policy (`tech.md` §3 Conventions) → **MEDIUM**
+
+### Check 8: Term Drift against Steering (both modes)
+
+Cross-reference every domain term used in `requirements.md` against `.claude/specs/_steering/context.md`.
+
+- Term used in REQ but not registered in `context.md` → **MEDIUM** (suggest: define the term in `context.md` via grill-with-docs, OR replace with a registered term)
+- Term registered in `context.md` but used with a meaning that conflicts with the registered definition → **HIGH**
+- New term flagged with `> **Glossary pending**: <term>` by `vsdd-requirements` → **MEDIUM** (must be resolved before `/vsdd-design`)
+
+If `.claude/specs/_steering/context.md` is missing, abort the review with: "Run `/vsdd-steering` first to bootstrap the steering files."
+
+---
+
+## Output Format
+
+Write the following to `.claude/specs/<slug>/review-results/requirement-review.md`:
+
+```markdown
+# Requirements Review: <slug>
+
+**Date**: <YYYY-MM-DD>
+**Reviewer**: vsdd-review-requirements skill
+**Mode**: <standard|auto>
+**Requirements reviewed**: <N> REQs (REQ-001 through REQ-NNN)
+
+## Overall Assessment
+
+<!-- 2-4 sentences: Is this requirements doc ready to proceed? What is the most critical concern? -->
+
+## Findings
+
+| REQ     | Issue               | Severity | Suggestion          |
+| ------- | ------------------- | -------- | ------------------- |
+| REQ-001 | <issue description> | HIGH     | <corrective action> |
+| REQ-002 | <issue description> | MEDIUM   | <corrective action> |
+| REQ-003 | <issue description> | LOW      | <corrective action> |
+
+_Severity: HIGH = blocks implementation, MEDIUM = should fix before design, LOW = consider before PR_
+
+## Recommended Actions Before Proceeding
+
+- [ ] **HIGH**: <action 1>
+- [ ] **HIGH**: <action 2>
+- [ ] **MEDIUM**: <action 3>
+
+## Sign-off Condition
+
+All HIGH severity findings must be resolved before running `/vsdd-design <slug>`.
+```
+
+---
+
+## change-log.md Update
+
+After writing findings to requirement-review.md, append to `.claude/specs/<slug>/change-log.md`:
+
+```
+| <YYYY-MM-DD> | vsdd-review-requirements | requirement-review.md 作成 (<N> findings: M HIGH, N MEDIUM, P LOW) |
+```
+
+Also update `.claude/specs/<slug>/progress.md`:
+
+```
+## Phase: vsdd-review-requirements
+
+**Status**: Complete
+**Date**: <YYYY-MM-DD>
+**Mode**: <standard|auto>
+**Findings**: <N> total (M HIGH, N MEDIUM, P LOW)
+```
+
+Change `vsdd-review-requirements` status from `⬜ not started` to `✅ complete`.
+
+---
+
+## Notes
+
+- Do not modify `requirements.md`. This skill is read-only with respect to requirements. The user must update requirements separately and rerun this skill if needed.
+- If all checks pass with zero HIGH severity findings, state this clearly in the Overall Assessment section. The user may still choose to proceed immediately.
+- In `--mode auto`, present findings in plain language without jargon. Label each finding with its business impact rather than technical category (e.g. "Users won't know what to do if the upload fails" instead of "Missing error path for REQ-003").
+- If `review-results/requirement-review.md` already exists, overwrite it with the new review (each run replaces the prior review). The prior review is preserved in `change-log.md`.
+
+---
+
+== PHASE COMPLETE: vsdd-review-requirements ==
+Artifact: .claude/specs/<slug>/review-results/requirement-review.md
+Summary:
+
+- Mode read from progress.md
+- requirements.md loaded and analyzed (N REQs)
+- Checks run: EARS compliance, ambiguity, missing elements, testability, completeness, numbering, technical feasibility (standard only)
+- Agents invoked: requirements-analyst (both modes), ecc:planner + ecc:docs-lookup + ecc:architect agents (standard only)
+- Findings written to review-results/requirement-review.md
+- change-log.md updated with finding count
+- progress.md updated: vsdd-review-requirements → complete
+
+⏸ WAITING FOR CONFIRMATION
+Type `CONFIRM vsdd-design` to proceed. Or describe changes needed.
