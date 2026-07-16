@@ -186,7 +186,7 @@ Phase 9はworkerの完了メッセージだけでは完了しません。GitHub 
 
 ### Publication-ready判定
 
-unit/integration test、80%以上のruntime coverage、Python/JSON検証、`claude plugin validate --strict`に加え、配布pluginを読み込んだ実Claude Codeで`/ecc-vsdd:vsdd-run start ...`から少なくともReview到達までのE2Eを1本完走した時点だけをpublication-readyとします。mock payloadやdry-runのみでは公開可と判定しません。
+unit/integration test、state-machine runtimeのline coverage 80%以上、Python/JSON検証、`claude plugin validate --strict`に加え、配布pluginを読み込んだ実Claude Codeで`/ecc-vsdd:vsdd-run start ...`から少なくともReview到達までのE2Eを1本完走した時点だけをpublication-readyとします。mock payloadやdry-runのみでは公開可と判定しません。
 
 ## クイックスタート — フェーズを個別実行
 
