@@ -21,7 +21,7 @@ Claude Code内で実行します。
 /reload-plugins
 ```
 
-plugin manifestの`dependencies: ["ecc"]`により、marketplaceのGitHub remote sourceから`affaan-m/ECC`が自動インストール・有効化されます。projectの`.claude/settings.json`へ`enabledPlugins`を書く必要はありません。
+plugin manifestの`dependencies: ["ecc"]`により、marketplaceの明示的なHTTPS Git sourceから`affaan-m/ECC`が自動インストール・有効化されます。projectの`.claude/settings.json`へ`enabledPlugins`を書く必要はありません。
 
 ローカルcheckoutを直接検証する場合は次のように起動できます。
 

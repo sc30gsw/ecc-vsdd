@@ -13,10 +13,10 @@
     {
       "name": "ecc",
       "source": {
-        "source": "github",
-        "repo": "affaan-m/ECC"
+        "source": "url",
+        "url": "https://github.com/affaan-m/ECC.git"
       },
-      "description": "ecc-vsddが利用するECC operator layer（GitHub remote source）"
+      "description": "ecc-vsddが利用するECC operator layer（HTTPS Git source）"
     }
   ]
 }

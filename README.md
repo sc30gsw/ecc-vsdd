@@ -125,7 +125,7 @@ GitHub PR         (REQ → TASK → commit トレーサビリティ表付き)
 /reload-plugins
 ```
 
-marketplace内の`ecc` entryは`affaan-m/ECC`をGitHub remote sourceとして参照し、`ecc-vsdd`のplugin manifestが`dependencies: ["ecc"]`で依存を宣言します。`ecc-vsdd`のインストール時にECCも自動解決されるため、`.claude/settings.json`の`enabledPlugins`やECCの個別installは不要です。インストール後、スキルは `/ecc-vsdd:vsdd-init` のように名前空間付きで呼べます（他プラグインと重複しなければ `/vsdd-init` の短縮形も可）。
+marketplace内の`ecc` entryは`affaan-m/ECC`を明示的なHTTPS Git sourceとして参照し、`ecc-vsdd`のplugin manifestが`dependencies: ["ecc"]`で依存を宣言します。`ecc-vsdd`のインストール時にECCも自動解決されるため、`.claude/settings.json`の`enabledPlugins`やECCの個別installは不要です。インストール後、スキルは `/ecc-vsdd:vsdd-init` のように名前空間付きで呼べます（他プラグインと重複しなければ `/vsdd-init` の短縮形も可）。
 
 ルートの`agents/`、`skills/`、`hooks/`、`scripts/`はプラグイン本体に同梱されます。したがってインストール後は15個のVSDD専用agentも利用可能で、別途`agents/`をコピーする必要はありません。
 
