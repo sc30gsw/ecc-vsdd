@@ -1,4 +1,15 @@
+---
+name: vsdd-design
+description: This skill should be used to create or revise a traceable VSDD technical design from approved requirements, steering viewpoints, and ADRs.
+---
+
 # vsdd-design
+
+## Mandatory execution routing
+
+Delegate all design authoring and revision to a fresh `ecc-vsdd:vsdd-design-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate the phase again. Any ECC planning skill runs inside this pinned Opus worker.
+
+When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior regardless of presentation mode, ask no questions, and do not wait on `CONFIRM`. The persisted design gate and fresh Opus plan review replace manual confirmation; unresolved decisions at the unattended boundary return `BLOCKED`.
 
 **Slash command**: `/vsdd-design <slug>`
 **Purpose**: Create `design.md` by delegating to the `/ecc:plan` command for architecture and step planning, then merging output into the design template. Stack-agnostic: all technology knowledge comes from `.claude/specs/_steering/tech.md`.
@@ -8,7 +19,7 @@
 ## Prerequisites
 
 - `.claude/specs/<slug>/requirements.md` must exist (run `/vsdd-requirements` first)
-- `.claude/specs/<slug>/source-notion.md` may optionally be present for additional context
+- `.claude/specs/<slug>/source-notion.md` or `source-request.md` may optionally be present for additional context; in unattended runs read every path from `run-state.json.source_paths`
 
 ---
 
@@ -25,7 +36,7 @@ Read the project steering files as read-only context:
 
 If `.claude/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
 
-If `tech.md` lacks the §2 Design Viewpoints / §3 Conventions / §4 Verification Commands sections (old format), pause and recommend: "tech.md uses the old format — re-run `/vsdd-steering` to regenerate it." Continue only if the user explicitly accepts designing without viewpoints.
+If `tech.md` lacks the §2 Design Viewpoints / §3 Conventions / §4 Verification Commands sections, return `BLOCKED` in unattended mode and require Steering refresh. Standalone mode may ask whether to continue.
 
 When the design introduces a new architectural decision (new state-management or persistence pattern, new third-party library, new cross-cutting concern):
 
@@ -37,6 +48,7 @@ When the design introduces a new architectural decision (new state-management or
 ```
 .claude/specs/<slug>/requirements.md      (required)
 .claude/specs/<slug>/source-notion.md     (optional)
+.claude/specs/<slug>/source-request.md    (optional)
 ```
 
 Extract:
@@ -67,9 +79,9 @@ the following viewpoints: <list tech.md §2 viewpoint names>, error handling
 strategy, and test strategy.
 ```
 
-**`--mode standard`**: Present the `/ecc:plan` output to the user. Allow the user to review, comment, and guide design interactively before proceeding. Incorporate feedback before scaffolding.
+**Standalone `--mode standard`**: Present the `/ecc:plan` output to the user. Allow the user to review, comment, and guide design interactively before proceeding. Incorporate feedback before scaffolding.
 
-**`--mode auto`**: Run `/ecc:plan` autonomously. Produce `design.md` directly, then append a plain-language "Auto-Design Summary" section at the top of the file for non-engineer reviewers to confirm before implementation starts.
+**`--mode auto` or unattended execution**: Run `/ecc:plan` autonomously and produce `design.md` directly. Append a plain-language "Auto-Design Summary" for review evidence, not as a confirmation pause.
 
 ### 3. Scaffold `design.md` from template
 
@@ -145,10 +157,13 @@ Summary:
 - Error handling and test strategy follow tech.md Conventions / Verification Commands
 - All sections include Satisfies: REQ-XXX traceability links
 
+[Standalone invocation only]
 ⏸ WAITING FOR CONFIRMATION
 Next: CONFIRM vsdd-tasks   (run /vsdd-tasks <slug> — task breakdown)
 Or: describe further design changes
 ```
+
+Omit the standalone confirmation lines entirely when `execution_mode: unattended`; return the completion artifact to the orchestrator immediately.
 
 ### After user-requested revisions
 
@@ -166,6 +181,7 @@ Artifact: .claude/specs/<slug>/design.md（更新箇所: <list sections>）
 Summary:
 - <bullet: what changed and why>
 
+[Standalone invocation only]
 ⏸ WAITING FOR CONFIRMATION
 Next (recommended): CONFIRM vsdd-tasks   → /vsdd-tasks <slug>
   - Required if tasks.md is still empty or predates this revision
@@ -175,6 +191,8 @@ Or: describe further design changes
 
 Do NOT recommend CONFIRM vsdd-review-plan as the default next step after design-only work.
 ```
+
+Omit the standalone confirmation lines in unattended execution and return the revision artifact immediately.
 
 ### If `tasks.md` already exists
 

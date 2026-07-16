@@ -1,246 +1,207 @@
-# VSDD ワークフロー — Skills Detail
+# ecc-vsdd Skills and Agents Reference
 
-> 各 VSDD Skill の入出力・引数・呼出エージェント・連携先を詳細化したリファレンス。
-> 概念は [vsdd-workflow.md](./vsdd-workflow.md)、使い方は [vsdd-workflow-usage.md](./vsdd-workflow-usage.md)。
+## Model routing policy
 
+| Skill / responsibility | Pinned agent | Model | Effort |
+| --- | --- | --- | --- |
+| `vsdd-run` | `vsdd-orchestrator` | Fable | `high` |
+| `vsdd-steering` | `vsdd-steering-worker` | Opus | `xhigh` |
+| `vsdd-init` | `vsdd-init-worker` | Haiku | `low` |
+| `vsdd-requirements` | `vsdd-requirements-worker` | Opus | `xhigh` |
+| `vsdd-review-requirements` | `vsdd-requirements-reviewer` | Opus | `xhigh` |
+| `vsdd-design` | `vsdd-design-worker` | Opus | `xhigh` |
+| `vsdd-tasks` | `vsdd-tasks-worker` | Sonnet | `high` |
+| `vsdd-review-plan` | `vsdd-plan-reviewer` | Opus | `xhigh` |
+| `vsdd-impl` plan / implementation | `vsdd-implementation-driver` | Sonnet | `ultracode` |
+| implementation plan review | `vsdd-implementation-workflow-reviewer` | Opus | `xhigh` |
+| code review | `vsdd-code-reviewer` | Opus | `xhigh` |
+| security review | `vsdd-security-reviewer` | Opus | `xhigh` |
+| ordinary remediation | `vsdd-remediation-worker` | Sonnet | `high` |
+| complex remediation | `vsdd-implementation-driver` | Sonnet | `ultracode` |
+| `vsdd-pr` | `vsdd-pr-worker` | Sonnet | `medium` |
+| `vsdd-workflow` bookkeeping | `vsdd-status-worker` | Haiku | `low` |
+
+Plugin agentは`agents/`に同梱します。直接Skillを実行した場合も同じagentへ委譲します。`inherit`、fallback、`max`、worker Fableは禁止です。
+
+## `vsdd-run`
+
+```text
+/ecc-vsdd:vsdd-run start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr]
+/ecc-vsdd:vsdd-run resume <slug> [source]
+/ecc-vsdd:vsdd-run status <slug>
+/ecc-vsdd:vsdd-run cancel <slug>
+/ecc-vsdd:vsdd-run cleanup <slug>
+```
+
+再開可能な状態機械です。Fableは固定fieldを読んで次phaseを選び、専用workerを起動します。成果物を自分で作りません。
+
+`start`は`operation: bootstrap`としてbundled runtimeの`bootstrap` commandだけを実行します。実際のrepository default（または明示`--base`）を検出し、base ref/branch/SHAを保存してから`vsdd/<slug>`と専用integration worktreeを作り、この時点のfeature specを`bootstrap_status: READY`の`run-state.json`だけにします。Phase 0より前なのでこのinvocationはSteeringを要求せず終了します。Steering後の別`operation: phase` Initが正確なbootstrap identityを検証してskeletonを作り、`CONSUMED`へ遷移します。曖昧でも`main`を仮定しません。`resume`はhashとcommitを再検証し、staleなphaseと下流を無効化します。source引数を付けたresumeは既存skeletonを保ったままsourceを更新し、Requirements以降を再実行します。
+
+Skill frontmatterの`PreToolUse` hookはFableに対して次を機械的に拒否します。
+
+- Write / Edit / Notebook edit
+- bundled launcher以外のBash
+- 未固定agent
+- per-invocation model overrideと混在sessionのglobal model固定
+- Fable `high`以外のeffort
+- orchestrator agent外でのfull-run mutation
+
+## Phase Skills
+
+### `vsdd-steering`
+
+```text
+/ecc-vsdd:vsdd-steering [--force] [--dry-run]
+```
+
+`_steering/`を生成またはrefreshします。自動runではrepository fingerprintがmissing/staleの場合だけOpus `xhigh`を起動します。`tech.md`はstack、design viewpoints、conventions、verification commandsの正本です。
+
+### `vsdd-init`
+
+```text
+/ecc-vsdd:vsdd-init <slug> [source-url] [--mode auto|standard]
+```
+
+Haiku `low`がspec skeleton、source、progress、change logを作成します。Steeringの作成は行わず、Opusによるcurrent状態を要求します。全自動`start`では先にintegration branch/worktreeと`run-state.json`だけをmanaged bootstrapし、Phase 1ではそれを上書きせず消費します。
+
+無人runではsourceとrepository evidenceから値を導出し、質問やoverwrite確認を行いません。`--update-source`では既存specへsourceだけを保存し、取得失敗時はblockします。
+
+### `vsdd-requirements`
+
+```text
+/ecc-vsdd:vsdd-requirements <slug>
+```
+
+Opus `xhigh`がEARS形式の`REQ-NNN`とbinaryな受入条件を作成します。無人runでは従来の7項目インタビューをソースから自動導出して`Elicitation Basis`へ記録します。可逆な技術的仮定は記録できますが、製品、security、compatibility、data-loss、destructive decisionはblockします。
+
+### `vsdd-review-requirements`
+
+```text
+/ecc-vsdd:vsdd-review-requirements <slug>
+```
+
+新規Opus `xhigh`がdisk-only contextでEARS、曖昧さ、testability、completeness、feasibility、term driftを確認します。Requirements authorとは別sessionです。
+
+### `vsdd-design`
+
+```text
+/ecc-vsdd:vsdd-design <slug>
+```
+
+Opus `xhigh`がapproved REQ、Steering viewpoints、ADRを満たす`design.md`を作成します。ECC planning capabilityを使う場合もこのOpus worker内で実行します。
+
+### `vsdd-tasks`
+
+```text
+/ecc-vsdd:vsdd-tasks <slug>
+```
+
+Sonnet `high`が`TASK-NNN`を作成し、REQとDesignへ紐付けます。TASKはwhatとverificationを定義し、dependency、parallel group、worktreeは定義しません。これらはPhase 7 Dynamic Workflowが決定します。
+
+Plan Review前のdeterministic gateは`tasks.md`見出しと`progress.md` Tasks tableのID集合が重複なく完全一致することを要求します。
+
+### `vsdd-review-plan`
+
+```text
+/ecc-vsdd:vsdd-review-plan <slug>
+```
+
+新規Opus `xhigh`がRequirements、Design、Tasksをまとめてreviewし、A〜Iのtraceabilityとviewpoint coverageを検証します。1件でも❌、またはCRITICAL/HIGHがあれば`REVISE`です。
+
+### `vsdd-impl`
+
+```text
+/ecc-vsdd:vsdd-impl <slug>
+```
+
+TASK単位引数は使用しません。bundled launcherが独立Sonnet main sessionを次の条件で起動します。
+
+```text
+--model sonnet
+--effort ultracode
+CLAUDE_CODE_SUBAGENT_MODEL=sonnet
+```
+
+custom agent frontmatterには`ultracode`を書かず、launcherだけがセッション起動時に指定します。これによりfrontmatterの通常effort値がultracodeを上書きする経路をなくし、hookは実効推論値`xhigh`を検証します。
+
+最初のDynamic Workflowは`implementation-workflow.md`だけを作成し、コードを変更しません。launcher自身がphase preflight、plugin manifest依存のchild引き継ぎ、session bindingを行います。長時間処理はlauncher-owned detached supervisorへ移し、Fableはshell backgroundを使わずforegroundの`wait --wait-seconds 45`をterminal結果まで反復します。新規Opus `xhigh`がPASSした後、そのworkflowをimmutableに保ったまま同じSonnet sessionをresumeして全TASKを実装します。attempt、TDD証跡、検証結果、正確な`TASK-to-SHA Mapping`は`implementation-ledger.md`へ保存し、runtimeのTASK別begin/finish counterにもPASS/FAILを記録します。
+
+### `vsdd-review`
+
+```text
+/ecc-vsdd:vsdd-review <slug>
+```
+
+別々の新規Opus `xhigh`を同じfull commit SHAへ起動します。
+
+- `vsdd-code-reviewer` → `review-results/code-review.md`
+- `vsdd-security-reviewer` → `review-results/security-review.md`
+
+相互にcontextやfindingを渡しません。どちらかにCRITICAL/HIGHがあればPRをblockします。
+
+### `vsdd-pr`
+
+```text
+/ecc-vsdd:vsdd-pr <slug>
+```
+
+Sonnet `medium`がREQ → Design → TASK → commit表、test plan、verification、review summaryを含むPRを作成します。実際のURL/numberとbase/head/target SHAを`pr-result.json`へ保存し、runtime snapshotがcurrent `HEAD`を検証します。
+
+- CRITICAL/HIGHあり: 作成しない
+- MEDIUM/manual follow-upあり: Draft
+- どちらもなし: Ready
+
+### `vsdd-workflow`
+
+```text
+/ecc-vsdd:vsdd-workflow [slug]
+```
+
+状態dashboardです。Haiku `low`が必要に応じてhash、commit、attempt、verdict、worktree、session IDを更新します。要件、設計、実装、review、PR本文は作成しません。
+
+## Structured review artifact
+
+すべてのreviewは次のfrontmatterを必須とします。
+
+```yaml
 ---
-
-## /vsdd-steering （Phase 0）
-
-| 項目                 | 内容                                                                        |
-| -------------------- | --------------------------------------------------------------------------- |
-| **役割**             | プロジェクトのステアリング 4 ファイル（`_steering/`）を bootstrap / refresh |
-| **引数**             | `[--force] [--dry-run]`                                                     |
-| **入力**             | `package.json`, `src/features/**`, `.claude/rules/typescript/*`             |
-| **出力**             | `.claude/specs/_steering/{tech,structure,context,open-questions}.md`        |
-| **呼出エージェント** | なし（純粋な自動抽出）                                                      |
-| **呼出先 Skill**     | なし                                                                        |
-| **呼出元 Skill**     | `/vsdd-init` Step 0                                                          |
-| **承認ゲート**       | 新規 Q-XXX 0 件 → 続行、≥ 1 件 → 中断（呼出元判定）                         |
-
-### 検出ルール
-
-| ID  | 検出内容                                                             |
-| --- | -------------------------------------------------------------------- |
-| 1   | 用語衝突（同一語幹が複数 feature にまたがる）                        |
-| 2   | 未使用シンボル（`pnpm fallow:dead-code` 取込）                       |
-| 3   | version 不整合（`package.json` major と `.claude/rules` の記述差異） |
-| 6   | 責務不明 feature（`types/` `schemas/` 空）                           |
-
+review_type: requirements|plan|implementation-workflow|code|security
+target_commit: <full-sha-or-N/A>
+verdict: PASS|REVISE|BLOCKED
+critical: <integer>
+high: <integer>
+medium: <integer>
+low: <integer>
+remediation_mode: none|standard|workflow
+reviewer_model: opus
+reviewer_effort: xhigh
+review_attempt: <1..3>
 ---
+```
 
-## /vsdd-init （Phase 1）
+Fableはこのfieldだけでgate遷移します。review本文の再評価やseverity変更は行いません。Status runtimeがreview前にatomic attempt numberを発行し、frontmatter、Opus/xhigh、severity整合性、単調なattempt、target commitを検証してsnapshotします。snapshotのないreviewを前段PASSとして認めず、同じattempt番号でreportを差し替えることもできません。
 
-| 項目                 | 内容                                                                                   |
-| -------------------- | -------------------------------------------------------------------------------------- |
-| **役割**             | spec ディレクトリ初期化                                                                |
-| **引数**             | `<slug> [notion-url] [--mode standard\|auto]`                                          |
-| **入力**             | Notion URL (オプション), `_steering/`（Step 0 で `/vsdd-steering` 経由）                |
-| **出力**             | `.claude/specs/<slug>/{source-notion.md, progress.md, change-log.md}` + プレースホルダ |
-| **呼出エージェント** | なし                                                                                   |
-| **呼出先 Skill**     | `/vsdd-steering`（Step 0 内部呼出）                                                     |
-| **承認ゲート**       | `CONFIRM vsdd-requirements`                                                             |
+## Retry limits
 
-### Step 0 の Gate ロジック
+| 対象 | 上限 |
+| --- | --- |
+| Requirements review | initial + 2 revisions/reviews |
+| Plan review | initial + 2 revisions/reviews |
+| Implementation Workflow review | initial + 2 revisions/reviews |
+| 各TASK | initial + 2 retries |
+| Code/Security remediation | initial review + 2 remediation/re-review rounds |
 
-- `_steering/open-questions.md` の新規 Q-XXX 検出件数を読む
-- 0 件 → Step 1 へ
-- ≥ 1 件 → 中断、ユーザに grill or `dismiss <Q-id>` を促す
+上限到達後は`VSDD RUN BLOCKED`です。FableやOpusが作業を引き継いだりgateをwaiveしたりしません。
 
----
+## Bundled runtime files
 
-## /vsdd-requirements （Phase 2）
-
-| 項目                 | 内容                                                                       |
-| -------------------- | -------------------------------------------------------------------------- |
-| **役割**             | EARS 形式の要件（REQ-001..N）作成                                          |
-| **引数**             | `<slug>`                                                                   |
-| **入力**             | `source-notion.md` (任意), `_steering/context.md` (用語強制)               |
-| **出力**             | `.claude/specs/<slug>/requirements.md`                                     |
-| **呼出エージェント** | なし（テンプレート + AI ドラフト）                                         |
-| **承認ゲート**       | `CONFIRM vsdd-review-requirements`                                          |
-| **モード差**         | `standard`: 人間が REQ を埋める / `auto`: 7 問のヒアリング後 AI が一括作成 |
-
-### Step 0: Steering Load
-
-- `context.md` の登録用語のみ使用
-- 未登録語が必要な場合: `open-questions.md` に Q-XXX 追加 + REQ に `> **Glossary pending**: <term>` 注記
-
----
-
-## /vsdd-review-requirements （Phase 3）
-
-| 項目                            | 内容                                                                         |
-| ------------------------------- | ---------------------------------------------------------------------------- |
-| **役割**                        | requirements.md のレビュー                                                   |
-| **引数**                        | `<slug>`                                                                     |
-| **入力**                        | `requirements.md`, `_steering/context.md`                                    |
-| **出力**                        | `review-results/requirement-review.md`                                       |
-| **呼出エージェント (standard)** | `requirements-analyst` → `ecc:planner` → `ecc:docs-lookup` → `ecc:architect` |
-| **呼出エージェント (auto)**     | `requirements-analyst` のみ                                                  |
-| **承認ゲート**                  | `CONFIRM vsdd-design`                                                         |
-
-### チェック項目
-
-| ID    | 内容                             | 重大度          |
-| ----- | -------------------------------- | --------------- |
-| 1     | EARS Format Compliance           | HIGH/MEDIUM     |
-| 2     | Ambiguous Terms                  | MEDIUM          |
-| 3     | Missing Elements                 | HIGH/MEDIUM     |
-| 4     | Testability                      | HIGH/MEDIUM     |
-| 5     | Completeness                     | MEDIUM/HIGH/LOW |
-| 6     | REQ ID Numbering                 | LOW/HIGH        |
-| 7     | Technical Feasibility (standard) | HIGH/MEDIUM     |
-| **8** | **Term Drift against Steering**  | **HIGH/MEDIUM** |
-
-Check 8 は `context.md` 未登録の用語使用 / 登録済 vs 使用文脈の意味乖離を検出。
-
----
-
-## /vsdd-design （Phase 4）
-
-| 項目           | 内容                                                                        |
-| -------------- | --------------------------------------------------------------------------- |
-| **役割**       | Mermaid 図 + ファイル構造 + 状態管理方針                                    |
-| **引数**       | `<slug>`                                                                    |
-| **入力**       | `requirements.md`, `_steering/{structure,tech,context}.md`, `docs/adr/*.md` |
-| **出力**       | `.claude/specs/<slug>/design.md`                                            |
-| **呼出先**     | `/ecc:plan` (command)                                                       |
-| **承認ゲート** | `CONFIRM vsdd-tasks`                                                         |
-
-### Step 0: Steering Load
-
-- `structure.md` の feature 境界を遵守。新規 feature は追加可だが境界を逸脱しない
-- `tech.md` 掲載ライブラリのみ使用。新規ライブラリは ADR で正当化
-- 横断決定は `Satisfies: ADR-NNNN` で引用
-- 新規アーキ決定は `> **ADR candidate**: <rationale>` でフラグ → 後で ADR 化
-
----
-
-## /vsdd-tasks （Phase 5）
-
-| 項目                 | 内容                             |
-| -------------------- | -------------------------------- |
-| **役割**             | 設計を TDD 順 TASK-001..M に分解 |
-| **引数**             | `<slug>`                         |
-| **入力**             | `design.md`, `requirements.md`   |
-| **出力**             | `tasks.md`, `progress.md` 更新   |
-| **呼出エージェント** | `ecc:planner` (推奨)             |
-| **承認ゲート**       | `CONFIRM vsdd-review-plan`        |
-
-各 TASK は `Implements: REQ-XXX` と `Design ref: §X.X` を必須記載。
-
----
-
-## /vsdd-review-plan （Phase 6）
-
-| 項目                            | 内容                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
-| **役割**                        | REQ → 設計 → タスクのトレーサビリティ検証                                             |
-| **引数**                        | `<slug>`                                                                              |
-| **入力**                        | `requirements.md`, `design.md`, `tasks.md`, `_steering/structure.md`, `docs/adr/*.md` |
-| **出力**                        | `review-results/plan-review.md`                                                       |
-| **呼出エージェント (standard)** | `ecc:docs-lookup` → `ecc:planner` → `ecc:architect`                                   |
-| **呼出エージェント (auto)**     | `ecc:architect` のみ                                                                  |
-| **承認ゲート**                  | 全 8 チェック ✅ → `CONFIRM vsdd-impl`                                                 |
-
-### トレーサビリティチェック
-
-| ID    | 内容                                                                |
-| ----- | ------------------------------------------------------------------- |
-| A     | REQ → Design coverage                                               |
-| B     | REQ → Task coverage                                                 |
-| C     | Design → Task coverage                                              |
-| D     | Task → REQ completeness                                             |
-| E     | Dangling references                                                 |
-| F     | Duplicate IDs                                                       |
-| **G** | **Structure Adherence**（`design.md` のパスが `structure.md` 整合） |
-| **H** | **ADR Citation**（横断決定が ADR 引用 or `> **ADR candidate**`）    |
-
-いずれか ❌ で実装ブロック。
-
----
-
-## /vsdd-impl （Phase 7）
-
-| 項目             | 内容                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| **役割**         | TDD 実装、`feat(TASK-NNN):` 形式でコミット                                                    |
-| **引数**         | `<slug> [task-id]` (省略時は全 pending タスク連続実行)                                        |
-| **入力**         | `tasks.md`, `design.md`, `requirements.md`                                                    |
-| **出力**         | コード + テスト, `progress.md` 更新                                                           |
-| **呼出先 Skill** | `/ecc:tdd-workflow`                                                                           |
-| **承認ゲート**   | `CONFIRM vsdd-review`                                                                          |
-| **モード差**     | `standard`: Red/Green/Refactor 各段階で停止 / `auto`: 連続実行、check 失敗時最大 3 回自己修正 |
-
----
-
-## /vsdd-review （Phase 8）
-
-| 項目           | 内容                                                                                      |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| **役割**       | コード + セキュリティ + ステアリング drift レビュー                                       |
-| **引数**       | `<slug>`                                                                                  |
-| **入力**       | `git diff main...HEAD`, `requirements.md`, `tasks.md`, `_steering/*`                      |
-| **出力**       | `review-results/code-review.md`                                                           |
-| **呼出先**     | native `code-review` (skill), `/ecc:code-review` (command), `ecc:security-review` (skill) |
-| **承認ゲート** | CRITICAL 0 件で `CONFIRM vsdd-pr`                                                          |
-
-### Step 4.5: Steering Drift Check
-
-| 検査             | 内容                                           |
-| ---------------- | ---------------------------------------------- |
-| 新規 feature     | `structure.md` に記載されているか              |
-| 新規 export      | `structure.md` の feature 行に列挙されているか |
-| 新規ドメイン用語 | `context.md` に登録されているか                |
-| 新規 dep         | `tech.md` に記載されているか                   |
-| 横断アーキ変更   | ADR 引用 or `> **ADR candidate**` フラグあり   |
-
-drift 検出時は `## Steering Drift` セクションに MEDIUM (or HIGH) で記録。
-
----
-
-## /vsdd-pr （Phase 9）
-
-| 項目           | 内容                                                        |
-| -------------- | ----------------------------------------------------------- |
-| **役割**       | REQ → TASK → commit トレーサビリティ表付きの GitHub PR 作成 |
-| **引数**       | `<slug>`                                                    |
-| **入力**       | `tasks.md`, `requirements.md`, `change-log.md`, `git log`   |
-| **出力**       | GitHub PR (`gh pr create` 経由)                             |
-| **承認ゲート** | なし（最終フェーズ）                                        |
-
----
-
-## /vsdd-workflow （Meta）
-
-| 項目           | 内容                           |
-| -------------- | ------------------------------ |
-| **役割**       | フェーズ進捗の表示 (read-only) |
-| **引数**       | `[slug]` (省略時は全 spec)     |
-| **入力**       | `progress.md`                  |
-| **出力**       | stdout のみ                    |
-| **承認ゲート** | なし                           |
-
----
-
-## 補助ツール一覧（Agent / Skill / Command）
-
-| ツール                 | 種別    | 用途                     | 起動 Phase           |
-| ---------------------- | ------- | ------------------------ | -------------------- |
-| `requirements-analyst` | agent   | EARS 整形 / 曖昧表現検出 | 3                    |
-| `ecc:docs-lookup`      | agent   | スタックドキュメント収集 | 3, 6 (standard のみ) |
-| `ecc:planner`          | agent   | スコープ / 依存リスク    | 3, 5, 6              |
-| `ecc:architect`        | agent   | 技術的実現可能性         | 3, 6 (standard のみ) |
-| `/ecc:plan`            | command | アーキテクチャ設計委譲   | 4                    |
-| `ecc:tdd-workflow`     | skill   | TDD 実装ループ           | 7                    |
-| `/ecc:code-review`     | command | 7 カテゴリ体系的レビュー | 8                    |
-| `ecc:security-review`  | skill   | セキュリティ観点         | 8                    |
-
----
-
-## 参考リンク
-
-- [VSDD ワークフロー（概念ガイド）](./vsdd-workflow.md)
-- [Usage Guide（使い方）](./vsdd-workflow-usage.md)
-- [VSDD ワークフロー インタラクティブ図](./vsdd-workflow.html)
+| File | Role |
+| --- | --- |
+| `scripts/vsdd-model-guard.py` | pinned model / effort、model override、Fable control-plane toolのruntime guard |
+| `scripts/vsdd-launch-worker.py` | independent Sonnet ultracode sessionの起動／resume |
+| `scripts/vsdd-runtime-state.py` | bootstrap/base検出、artifact hash無効化、phase/review/Steering/TASK/commitのdeterministic gate |
+| `skills/vsdd-run/references/model-routing.md` | model / effort正本 |
+| `skills/vsdd-run/references/run-state-contract.md` | state、hash、invalidation、retry正本 |
+| `skills/vsdd-run/references/review-contract.md` | review schemaとseverity正本 |
+| `skills/vsdd-run/references/implementation-contract.md` | Dynamic Workflow、TDD、commit、remediation正本 |
+| `skills/vsdd-run/references/runtime-contract.md` | 無人context、phase preflight、source update、TASK integrity正本 |

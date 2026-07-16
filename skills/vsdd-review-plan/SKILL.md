@@ -1,4 +1,13 @@
+---
+name: vsdd-review-plan
+description: This skill should be used to independently review the complete VSDD requirements, design, tasks, viewpoints, and REQ-to-TASK traceability before implementation.
+---
+
 # vsdd-review-plan
+
+## Mandatory execution routing
+
+Delegate each review attempt to a new `ecc-vsdd:vsdd-plan-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit requirements, design, or tasks; write only the plan review artifact.
 
 **Slash command**: `/vsdd-review-plan <slug>`
 **Purpose**: Comprehensive pre-implementation review of requirements, design, and tasks. Writes "Traceability Coherence" and "Plan Review" findings to `review-results/plan-review.md`.
@@ -12,6 +21,7 @@
 - `.claude/specs/<slug>/tasks.md` must exist
 - `.claude/specs/<slug>/progress.md` must exist (used to read `mode`)
 - `.claude/specs/<slug>/review-results/requirement-review.md` must exist (created by `vsdd-review-requirements`). If missing, abort: "Run `/vsdd-review-requirements <slug>` first."
+- The set of every `TASK-NNN` heading in `tasks.md` must exactly equal the set of TASK rows in the `progress.md` Tasks table. Duplicate, missing, or extra IDs are a blocking traceability failure. In an orchestrated run, require the Status worker's deterministic `plan-review` preflight before launching this reviewer.
 
 ---
 
@@ -33,6 +43,9 @@ Build three indexes in memory:
 - **REQ index**: all `REQ-XXX` IDs found in requirements.md
 - **Design section index**: all `§X.X <title>` headings found in design.md
 - **TASK index**: all `TASK-XXX` IDs found in tasks.md
+- **Progress TASK index**: all `TASK-XXX` IDs found in the `progress.md` Tasks table
+
+Before Check A, compare the TASK and Progress TASK indexes as sets and also reject duplicates in either source. On mismatch, write the structured review artifact with `verdict: REVISE`, name every missing/extra/duplicate ID, and stop. A non-empty table or a single matching row is never sufficient.
 
 ### 2. Run traceability coherence check (BOTH modes)
 
@@ -151,6 +164,20 @@ If `.claude/specs/_steering/structure.md` is missing, abort with: "Run `/vsdd-st
 Write to `.claude/specs/<slug>/review-results/plan-review.md`:
 
 ```markdown
+---
+review_type: plan
+target_commit: N/A
+verdict: PASS|REVISE|BLOCKED
+critical: <integer>
+high: <integer>
+medium: <integer>
+low: <integer>
+remediation_mode: none
+reviewer_model: opus
+reviewer_effort: xhigh
+review_attempt: <1..3>
+---
+
 # Plan Review: <slug>
 
 **Date**: <YYYY-MM-DD>
@@ -173,7 +200,7 @@ Write to `.claude/specs/<slug>/review-results/plan-review.md`:
 | I: Viewpoints    | ✅ / ❌ / ⚠️ | <!-- missing viewpoint sections or "all covered" --> |
 ```
 
-### 4. CRITICAL gate — stop on any traceability failure
+### 4. Blocking gate — stop on any traceability failure
 
 If ANY check is ❌, output the following and STOP. Do NOT output the PHASE COMPLETE gate.
 
@@ -187,25 +214,11 @@ The following issues must be fixed in the spec files before proceeding:
 Fix the issues listed above, then re-run /vsdd-review-plan <slug>.
 ```
 
-Only continue to Step 5 if ALL checks (A–I) are ✅ (Check I may be ⚠️ skipped on old-format tech.md — recommend `/vsdd-steering` re-run).
+Only continue to Step 5 if ALL checks (A–I) are ✅. Treat an old-format or skipped Check I as `REVISE`; Steering must be refreshed before implementation.
 
-### 5. Mode-specific plan review
+### 5. Independent plan review
 
-**`--mode standard`**:
-
-1. Invoke `ecc:docs-lookup` agent (stack documentation gathering)
-   - Fetch current documentation for each technology from `.claude/specs/_steering/tech.md` §1 Stack that design.md references
-   - Output: stack capability summary and known constraints to pass to subsequent agents
-2. Invoke `ecc:planner` agent with the full requirements + design + tasks context
-   - Focus: scope completeness, task ordering risks, dependency gaps, missing scenarios
-3. Invoke `ecc:architect` agent with the full context + stack documentation from step 1
-   - Focus: architectural soundness, technology fit, implementation risks, design section gaps
-4. Collect all findings
-
-**`--mode auto`**:
-
-1. Invoke `ecc:architect` agent only (skip ecc:planner agent and ecc:docs-lookup agent)
-2. Collect findings
+Execute architecture, task-breakdown, scope, dependency, feasibility, and stack checks inside the single fresh pinned Opus reviewer. Consult authoritative stack documentation only when a current external fact is material. Do not spawn inherited or ECC default reviewers whose model and effort are not pinned. Mode changes presentation only, not review coverage or gating.
 
 ### 6. Write Plan Review to `review-results/plan-review.md`
 
@@ -224,7 +237,7 @@ Write findings to plan-review.md after the Traceability Coherence section:
 | ----------- | ----- | -------- | ---------- |
 | ...         | ...   | ...      | ...        |
 
-## Technology Stack Review (standard mode only)
+## Technology Stack Review (when relevant)
 
 | 確認項目 | 結果 | 影響 |
 | -------- | ---- | ---- |
@@ -238,7 +251,7 @@ Write findings to plan-review.md after the Traceability Coherence section:
 
 ## Sign-off Condition
 
-All HIGH severity findings must be resolved before running `/vsdd-impl <slug>`.
+All CRITICAL/HIGH findings and every failed A–I check must be resolved before `/vsdd-impl <slug>`.
 ```
 
 ---
@@ -253,7 +266,7 @@ All HIGH severity findings must be resolved before running `/vsdd-impl <slug>`.
 
 ## progress.md and change-log.md Update
 
-After writing plan-review.md, update `.claude/specs/<slug>/progress.md`: change `vsdd-review-plan` from `⬜ not started` to `✅ complete`.
+After writing plan-review.md, set `vsdd-review-plan` to `✅ complete` only for `verdict: PASS`; otherwise record `🔄 revise` or `⛔ blocked` with the attempt number.
 
 Append to `.claude/specs/<slug>/change-log.md`:
 
@@ -265,18 +278,17 @@ Append to `.claude/specs/<slug>/change-log.md`:
 
 ## Phase Gate
 
-Only output this block when ALL six traceability checks are ✅ AND plan review is complete:
+Only output this block when all A–I traceability checks are ✅, CRITICAL/HIGH are zero, and `verdict: PASS`:
 
 ```
 == PHASE COMPLETE: vsdd-review-plan ==
 Artifact: .claude/specs/<slug>/review-results/plan-review.md
 Summary:
 - All traceability coherence checks passed (A–I)
-- Plan reviewed by ecc:architect agent (+ ecc:planner + ecc:docs-lookup agents in standard mode; docs-lookup runs first for stack context)
+- Plan reviewed by a fresh independent Opus xhigh reviewer
 - Key risks and open questions documented in review-results/plan-review.md
 - Spec is ready for implementation
-- Run /vsdd-impl <slug> TASK-001 to begin
+- Run /vsdd-impl <slug> to begin the whole-task Dynamic Workflow
 
-⏸ WAITING FOR CONFIRMATION
-Type `CONFIRM vsdd-impl` to proceed with implementation, or describe changes needed.
+Gate: continue automatically only for `verdict: PASS`; otherwise revise with the owning pinned author and obtain a new fresh Opus review, up to three reviews total.
 ```

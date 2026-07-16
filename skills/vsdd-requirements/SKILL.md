@@ -1,4 +1,15 @@
+---
+name: vsdd-requirements
+description: This skill should be used to create or revise traceable EARS requirements and acceptance criteria for an initialized VSDD specification.
+---
+
 # Skill: vsdd-requirements
+
+## Mandatory execution routing
+
+Delegate all requirements authoring and revision to a fresh `ecc-vsdd:vsdd-requirements-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Record reversible technical assumptions, but return `BLOCKED` for unresolved product, data-loss, security, compatibility, destructive, or external-authority decisions.
+
+When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, read every persisted source path and the original request from `run-state.json`, do not ask any elicitation or overwrite question, and do not wait on `CONFIRM`. The persisted artifact gate and fresh Opus review replace manual confirmation.
 
 ## Invocation
 
@@ -33,9 +44,9 @@ If `.claude/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` firs
 
 When a REQ requires a domain term not in `context.md`:
 
-1. Append a new `### Q-NNN: Undefined term '<term>' used in REQ-XXX` entry to `.claude/specs/_steering/open-questions.md` (rule: term drift).
+1. Append a new `### Q-NNN: Undefined term '<term>' used in REQ-XXX` entry to `.claude/specs/_steering/open-questions.md` with `Impact: product` and `Status: open`.
 2. Use the term in REQ with a `> **Glossary pending**: <term>` note.
-3. Resolve in a separate grill-with-docs session before proceeding to `/vsdd-design`.
+3. In unattended mode return `BLOCKED` immediately; otherwise resolve in a separate grill-with-docs session before `/vsdd-design`.
 
 ### Step 1: Read mode from progress.md
 
@@ -47,7 +58,7 @@ Read `.claude/specs/<slug>/progress.md` and extract the `**Mode**:` value.
 
 ### Step 2: Load source material (if available)
 
-If `.claude/specs/<slug>/source-notion.md` exists, read it as background context. Do NOT output it; use it to inform questions and drafts.
+Read every path in `run-state.json.source_paths`, including `source-notion.md` or `source-request.md`, as background context. Do not output raw source content.
 
 ### Step 3: Mode-specific execution
 
@@ -67,7 +78,9 @@ Engineer-led. The AI presents a scaffold and assists completions.
 
 AI-led. The AI asks Socratic questions, then constructs requirements autonomously.
 
-Ask the following questions one at a time (wait for each answer before proceeding):
+When `execution_mode: unattended`, do not ask the questions below. Derive and record answers for all seven topics from persisted source material under a `## Elicitation Basis` section containing source paths, evidence, and stated reversible assumptions. If the evidence cannot answer a product, permission, security, compatibility, data-loss, destructive, or external-authority topic, return `BLOCKED` with the one missing decision. Otherwise synthesize and write the complete EARS requirements immediately.
+
+Only for standalone Auto Mode, ask the following questions one at a time:
 
 1. "What problem does this feature solve? Who experiences it?"
 2. "Who are the main users of this feature? List their roles."
@@ -146,7 +159,7 @@ Append to `.claude/specs/<slug>/change-log.md`:
 
 - Requirements must reflect user-observable behavior, not implementation details.
 - Avoid implementation language ("the database will store...", "the API will call..."). Write in terms of what the system does from the user's perspective.
-- In `--mode auto`, if the user's answers are ambiguous, make a stated assumption rather than looping back. Document the assumption in the REQ block as `> **Assumption**: <text>`.
+- In standalone `--mode auto`, if answers are technically ambiguous, make a stated reversible assumption rather than looping back. In unattended mode apply the stricter decision boundary above. Document every assumption in the REQ block as `> **Assumption**: <text>`.
 - Rerunning this skill on an existing `requirements.md` opens an edit session, not a blank slate.
 
 ---
@@ -156,10 +169,13 @@ Artifact: .claude/specs/<slug>/requirements.md
 Summary:
 
 - Mode read from progress.md
-- Source Notion content loaded as context (if available)
+- All persisted source paths loaded as context (if available)
 - Requirements elicited and written in EARS format
 - EARS compliance checks run; issues flagged
 - progress.md updated: vsdd-requirements → complete
 
+[Standalone invocation only]
 ⏸ WAITING FOR CONFIRMATION
 Type `CONFIRM vsdd-review-requirements` to proceed. Or describe changes needed.
+
+Omit the standalone confirmation lines entirely when `execution_mode: unattended`; return the completion artifact to the orchestrator immediately.

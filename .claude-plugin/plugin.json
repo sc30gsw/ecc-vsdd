@@ -1,10 +1,11 @@
 {
   "name": "ecc-vsdd",
-  "version": "0.1.1",
-  "description": "VSDD (Verified Spec-Driven Development) ワークフロー — 検証型仕様駆動開発ワークフロー",
+  "version": "0.2.4",
+  "description": "VSDDワークフロー — Fable制御、決定的な無人実行gate、Sonnet Dynamic Workflow、独立Opusレビューによる再開可能な自動開発",
   "author": {
     "name": "sc30gsw"
   },
+  "dependencies": ["ecc"],
   "homepage": "https://zenn.dev/sc30gsw/articles/1373752d9713b3",
   "keywords": ["vsdd", "sdd", "tdd", "spec-driven-development", "workflow"]
 }

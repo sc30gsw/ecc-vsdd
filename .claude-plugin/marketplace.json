@@ -8,7 +8,15 @@
     {
       "name": "ecc-vsdd",
       "source": "./",
-      "description": "VSDD ワークフロー（9 フェーズ + 承認ゲート）— 検証型仕様駆動開発ワークフロー"
+      "description": "VSDDワークフロー（10フェーズ + モデル固定worker + 決定的な無人実行gate + 独立Opus検証）"
+    },
+    {
+      "name": "ecc",
+      "source": {
+        "source": "github",
+        "repo": "affaan-m/ECC"
+      },
+      "description": "ecc-vsddが利用するECC operator layer（GitHub remote source）"
     }
   ]
 }

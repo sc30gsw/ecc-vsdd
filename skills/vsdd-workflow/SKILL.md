@@ -1,200 +1,103 @@
-# vsdd-workflow — Workflow Status Dashboard
+---
+name: vsdd-workflow
+description: This skill should be used to inspect VSDD run state, phase validity, hashes, retries, blockers, worktrees, review verdicts, and resume instructions without performing implementation work.
+---
 
-## Slash Command
+# vsdd-workflow — State dashboard
 
-```
+## Invocation
+
+```text
 /vsdd-workflow [slug]
 ```
 
-## Purpose
+## Routing and scope
 
-Read-only meta skill. Displays the current state of the VSDD workflow — which phases are complete, which is next, and any blockers. Does NOT modify any files.
+Return a purely read-only display directly when no persisted state must change. Delegate hash recomputation, invalidation, retry bookkeeping, cancellation state, or cleanup bookkeeping to a fresh `ecc-vsdd:vsdd-status-worker` (Haiku, `low`).
 
----
+Never author or revise Steering, requirements, design, tasks, implementation, reviews, commits, or PR text.
 
-## This Skill is Read-Only
+Read the run-state contract:
 
-`vsdd-workflow` never writes to or modifies any file. It only reads spec files and git history to report status. There is no approval gate for this skill.
-
----
-
-## Usage: Specific Feature
-
-```
-/vsdd-workflow <slug>
+```text
+${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/run-state-contract.md
+${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/runtime-contract.md
 ```
 
-Reads `.claude/specs/<slug>/` and displays the full phase chain with status:
+## List view
 
-```
-VSDD Workflow: <slug>
-Mode: standard | auto
-Branch: feature/<slug> (12 commits ahead of main)
+Without a slug, enumerate `.claude/specs/*/run-state.json` except `_steering` and display:
 
-Phase Chain:
-[✅] vsdd-init              — source-notion.md archived
-[✅] vsdd-requirements      — requirements.md: 5 REQs defined
-[✅] vsdd-review-requirements — requirement-review.md: Requirements Review present
-[✅] vsdd-design            — design.md: 8 sections
-[✅] vsdd-tasks             — tasks.md: 12 TASKs defined
-[✅] vsdd-review-plan       — plan-review.md: Plan Review + Traceability ✅
-[🔄] vsdd-impl              — progress: 3/12 done, TASK-004 in-progress
-[⏳] vsdd-review            — waiting for vsdd-impl to complete
-[⏳] vsdd-pr                — waiting
+| Slug | Status | Current phase | Attempt | Branch | Updated | Next action |
+| --- | --- | --- | --- | --- | --- | --- |
 
-Next action: /vsdd-impl <slug> TASK-004   (resume in-progress task)
-       or:   CONFIRM vsdd-impl            (if paused at a gate)
-```
+If a legacy spec has no `run-state.json`, label it `legacy/unmanaged` and suggest starting or migrating through `vsdd-run`; do not fabricate state.
 
-Status icons:
+## Detail view
 
-| Icon | Meaning               |
-| ---- | --------------------- |
-| ✅   | Phase complete        |
-| 🔄   | Phase in progress     |
-| ⚠️   | Phase has a blocker   |
-| ⏳   | Phase not yet started |
+With a slug, read `run-state.json`, current Git state, artifacts, and structured review frontmatter. Recompute hashes only through the Status worker.
 
----
+Display:
 
-## Usage: All Features
+1. run status: RUNNING, BLOCKED, CANCELLED, or COMPLETE;
+2. base ref/SHA, integration branch/worktree, current head;
+3. current phase and retry budget;
+4. each phase's pinned agent/model/effort;
+5. persisted input/output hash validity;
+6. review verdicts and target commits;
+7. implementation session ID and worker evidence;
+8. immutable implementation plan and `implementation-ledger.md` evidence;
+9. exact `tasks.md` / `progress.md` / ledger TASK-set status;
+10. blocked TASKs and dependent TASKs not started;
+11. exact resume, source-update resume, cancel, and cleanup commands.
 
-```
-/vsdd-workflow
-```
+Use this phase table:
 
-Lists all spec directories under `.claude/specs/` and shows each feature's current phase:
-
-```
-VSDD Workflow Overview
-Specs directory: .claude/specs/
-
-slug                     | current phase  | status
--------------------------|----------------|-----------------------------------
-user-authentication      | vsdd-impl       | 🔄 3/8 tasks done
-mail-group-bulk-delete   | vsdd-pr         | ✅ PR #42 open
-supplier-csv-export      | vsdd-design     | ⏳ not started
+```text
+0  Steering
+1  Init
+2  Requirements
+3  Requirements Review
+4  Design
+5  Tasks
+6  Plan Review
+7a Implementation Plan
+7b Implementation Workflow Review
+7c Implementation
+8a Code Review
+8b Security Review
+8c Remediation, when required
+9  PR
 ```
 
-If `.claude/specs/` is empty or does not exist:
+## Validity rules
 
-```
-No spec directories found under .claude/specs/
-Run /vsdd-init <slug> to start a new feature.
-```
+- A file's existence never proves phase completion.
+- Before displaying a resumable next phase, have the Status worker run deterministic `preflight`; show `INVALIDATED` from its earliest phase instead of stale completion state.
+- A review is valid only when its structured frontmatter is parseable, its reviewer model/effort match the contract, and its artifact hash or target commit is current.
+- Code and security reviews must target the same current full SHA.
+- CRITICAL/HIGH requires `REVISE`; MEDIUM may proceed; `BLOCKED` stops.
+- An input hash change invalidates its owning phase and every downstream phase.
+- Any unresolved Steering `Status: open`, `DRAFT`, or `Glossary pending` marker blocks every downstream phase.
+- Before Plan Review, the TASK ID sets in `tasks.md` and the `progress.md` Tasks table must be exactly equal.
+- Before Code Review and later phases, every TASK must additionally be `done` and map exactly once to an existing commit in `implementation-ledger.md`.
+- `base_ref`, `base_branch`, and `base_sha` are persisted at Start; never substitute `main` or silently redetect another base on resume.
+- Retry counters remain on resume unless upstream invalidation legitimately resets the owning phase.
+- PR completion requires a persisted GitHub URL and matching head SHA.
 
----
+## Output example
 
-## Phase Detection Logic
-
-Each phase is detected by inspecting files inside `.claude/specs/<slug>/`. Detection is sequential: if a phase's condition is not met, all subsequent phases show `⏳`.
-
-| Phase                     | Detected When                                                                           |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| `vsdd-init`                | `source-notion.md` exists OR the `<slug>` directory itself exists                       |
-| `vsdd-requirements`        | `requirements.md` exists AND contains at least one `## REQ-` heading                    |
-| `vsdd-review-requirements` | `review-results/requirement-review.md` exists                                           |
-| `vsdd-design`              | `design.md` exists (any non-empty content)                                              |
-| `vsdd-tasks`               | `tasks.md` exists AND contains at least one `### TASK-` heading                         |
-| `vsdd-review-plan`         | `review-results/plan-review.md` exists AND contains no `❌` in its Traceability section |
-| `vsdd-impl`                | `progress.md` has at least one task marked `done`                                       |
-| `vsdd-review`              | `review-results/code-review.md` exists                                                  |
-| `vsdd-pr`                  | `progress.md` contains a `## PR` section with a URL                                     |
-
----
-
-## Progress Metrics (vsdd-impl)
-
-When `vsdd-impl` is the current phase, show task completion metrics by parsing `progress.md`:
-
-```
-[🔄] vsdd-impl — progress: 3/12 done (25%), 1 in-progress, 8 pending
-     In-progress: TASK-004 (Create supplier CSV export hook)
-     Last completed: TASK-003 (Add export button to supplier table)
-```
-
-Count tasks by status by reading the `## Tasks` table in `progress.md`:
-
-- `done`: table rows with `| done |` in the Status column
-- `in-progress`: table rows with `| in-progress |` in the Status column
-- `pending`: table rows with `| pending |` in the Status column
-
----
-
-## Blocker Detection
-
-For the currently active or blocked phase, surface known blockers:
-
-| Phase        | Blocker Condition                                                               | Warning Message                                         |
-| ------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `vsdd-impl`   | `review-results/plan-review.md` does not exist                                  | ⚠️ Run /vsdd-review-plan \<slug\> before implementing    |
-| `vsdd-review` | `progress.md` has tasks still `pending`                                         | ⚠️ N tasks still pending — run /vsdd-impl \<slug\> first |
-| `vsdd-pr`     | `review-results/code-review.md` has unchecked `- [ ]` items under `## CRITICAL` | ⚠️ Resolve all CRITICAL issues before creating PR       |
-| `vsdd-pr`     | `review-results/code-review.md` does not exist                                  | ⚠️ Run /vsdd-review \<slug\> before creating PR          |
-
-Blockers appear with ⚠️ next to the phase name and a `Blocker:` line in the output.
-
----
-
-## Git Branch Detection
-
-Display the current branch and commit count:
-
-```bash
-git branch --show-current
-git log main...HEAD --oneline | wc -l
-```
-
-Output:
-
-```
-Branch: feature/user-authentication (12 commits ahead of main)
-```
-
-If the current branch does not match the slug:
-
-```
-⚠️ Current branch (feature/other-thing) does not match slug (user-authentication)
-   Switch to the correct branch before running implementation or review skills.
-```
-
----
-
-## Full Phase Chain Reference
-
-The complete VSDD skill chain in order:
-
-```
-1. vsdd-init                — Archive Notion source, create spec directory
-2. vsdd-requirements        — Write requirements.md from source-notion.md
-3. vsdd-review-requirements — Review requirements, write to review-results/requirement-review.md
-4. vsdd-design              — Write design.md (architecture, components, API)
-5. vsdd-tasks               — Write tasks.md (TASK-xxx breakdown)
-6. vsdd-review-plan         — Review plan, verify traceability, write to review-results/plan-review.md
-7. vsdd-impl                — TDD implementation, one commit per task
-8. vsdd-review              — Code + security review, write to review-results/code-review.md
-9. vsdd-pr                  — Create GitHub PR with traceability and test plan
-```
-
----
-
-## Example: Fully Complete Feature
-
-```
-VSDD Workflow: user-authentication
-Mode: auto
-Branch: feature/user-authentication (12 commits ahead of main)
-
-Phase Chain:
-[✅] vsdd-init              — source-notion.md archived
-[✅] vsdd-requirements      — requirements.md: 5 REQs (REQ-001 through REQ-005)
-[✅] vsdd-review-requirements — requirement-review.md: Requirements Review present
-[✅] vsdd-design            — design.md: 6 sections
-[✅] vsdd-tasks             — tasks.md: 12 TASKs defined
-[✅] vsdd-review-plan       — plan-review.md: Plan Review, Traceability ✅
-[✅] vsdd-impl              — progress: 12/12 done
-[✅] vsdd-review            — code-review.md: Code Review (2026-05-26), 0 CRITICAL, 2 HIGH open
-[⏳] vsdd-pr                — waiting
-
-Next action: /vsdd-pr user-authentication
+```text
+VSDD STATUS: mail-groups-filter
+Status: BLOCKED
+Phase: implementation-plan-review
+Attempt: 3/3
+Branch: vsdd/mail-groups-filter
+Worktree: /absolute/path
+Implementation session: <uuid>
+Reviews: requirements=PASS plan=PASS implementation-workflow=REVISE code=not-run security=not-run
+Evidence: .claude/specs/mail-groups-filter/review-results/implementation-workflow-review.md
+Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
+Cancel: /ecc-vsdd:vsdd-run cancel mail-groups-filter
+Cleanup: /ecc-vsdd:vsdd-run cleanup mail-groups-filter
 ```

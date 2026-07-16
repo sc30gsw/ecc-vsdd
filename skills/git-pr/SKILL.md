@@ -1,45 +1,47 @@
 ---
 name: git-pr
-description: Generate PR description and automatically create pull request on GitHub
+description: Generate a PR description and create a draft pull request on GitHub. Analyzes the diff, adds two-track scoring and a styled Mermaid diagram.
 ---
 
 # Git PR: Pull Request Automation
 
 Generate a PR description and open a draft pull request on GitHub. Adds a two-track scoring system (Review Attention + Simplicity) with Greptile-style confidence tags, and produces styled Mermaid diagrams reviewers can read at a glance.
 
-All analysis runs through **CLI tools** (`git`, `gh`, `rg`, `ctx7`) — no MCP servers required.
+All analysis runs through **CLI tools** (`git`, `gh`, `rg`) — no MCP servers required.
 
 ## Usage
 
 ```bash
-/git:pr [options]
+/git-pr [options]
 ```
 
 ## Options
 
 | Option            | Description                                                | Example                   |
 | ----------------- | ---------------------------------------------------------- | ------------------------- |
-| (default)         | Generate PR description and create PR                      | `/git:pr`                 |
-| `-p`              | Push current branch and create PR                          | `/git:pr -p`              |
-| `-u`              | Update existing PR description only                        | `/git:pr -u`              |
-| `--no-score`      | Skip both Review Attention and Simplicity scoring          | `/git:pr --no-score`      |
-| `--no-simplicity` | Skip only the Cleanup Burden score (keep Review Attention) | `/git:pr --no-simplicity` |
-| `--no-mermaid`    | Skip Mermaid diagram generation                            | `/git:pr --no-mermaid`    |
+| (default)         | Generate PR description and create PR                      | `/git-pr`                 |
+| `-p`              | Push current branch and create PR                          | `/git-pr -p`              |
+| `-u`              | Update existing PR description only                        | `/git-pr -u`              |
+| `--no-score`      | Skip both Review Attention and Simplicity scoring          | `/git-pr --no-score`      |
+| `--no-simplicity` | Skip only the Cleanup Burden score (keep Review Attention) | `/git-pr --no-simplicity` |
+| `--no-mermaid`    | Skip Mermaid diagram generation                            | `/git-pr --no-mermaid`    |
 
 ## Companion Skills
 
-Do not try to do everything in `/git:pr`. Coordinate with two built-in skills:
+Do not try to do everything in `/git-pr`. Coordinate with two built-in skills:
 
-| Skill            | Responsibility                                                   | Relation to `/git:pr`                                                                       |
+| Skill            | Responsibility                                                   | Relation to `/git-pr`                                                                       |
 | ---------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `/code-review`   | Review changed code for reuse, quality, efficiency, then **fix** | Run **before** `/git:pr` on big changes — lowers Simplicity / Complexity / Influence scores |
-| `/git:pr` (this) | Generate description, Mermaid, scores → `gh pr create --draft`   | Touches **no code** — metadata only                                                         |
-| `/review`        | Per-line review of an existing PR                                | Run **after** `/git:pr` on High / Critical PRs as a self-check before requesting reviewers  |
+| `/code-review`     | Review changed code for reuse, quality, efficiency, then **fix** | Run **before** `/git-pr` on big changes — lowers Simplicity / Complexity / Influence scores                          |
+| `/git-pr` (this)   | Generate description, Mermaid, scores → `gh pr create --draft`   | Touches **no code** — metadata only                                                                                 |
+| `/security-review` | Audit the diff for security vulnerabilities (secrets, authz, injection) | Run **after** `/git-pr` **only when a security factor is detected** (auth / secrets / payment / external API / migration) — before `/review` |
+| `/review`          | Per-line review of an existing PR                                | Run **after** `/git-pr` on High / Critical PRs as a self-check before requesting reviewers                           |
 
 ### Non-goals
 
 - No per-line code review comments → that is `/review`'s job
 - No code edits → that is `/code-review`'s job
+- No security audit itself → `/git-pr` only **suggests** `/security-review` when a security factor is present; the actual audit is that skill's job
 - The Simplicity axis only **scores and points**; the actual fix is delegated to `/code-review`
 
 ## CLI Toolbox
@@ -92,21 +94,9 @@ rg -n '\.map\([^)]*\)\.filter\(' .             # map().filter() chain
 rg -n 'new\s+[A-Z][A-Za-z0-9_]*\(' .           # direct `new` (DI smell)
 ```
 
-### Documentation lookup (ctx7 CLI — see `/find-docs` skill)
-
-```bash
-# Step 1: resolve library id
-ctx7 library nextjs "How to set up app router with middleware"
-
-# Step 2: query docs with the resolved id
-ctx7 docs /vercel/next.js "How to add authentication middleware to app router"
-```
-
-Do not invoke more than 3 `ctx7` calls per PR generation. See the `/find-docs` skill for full rules, version pinning, and authentication.
-
 ## Workflow
 
-> Companion chain: `/code-review` (pre) → `/git:pr` (this) → `/review` (post). For large changes, run `/code-review` first so scores drop and reviewers have less to wade through.
+> Companion chain: `/code-review` (pre) → `/git-pr` (this) → `/security-review` (only if a security factor is detected) → `/review` (post). For large changes, run `/code-review` first so scores drop and reviewers have less to wade through.
 
 ### Default (no option)
 
@@ -123,10 +113,10 @@ Do not invoke more than 3 `ctx7` calls per PR generation. See the `/find-docs` s
    - Append two trailing sections: **`## 📊 Review Attention Score`** and **`## 🧹 Cleanup Burden`**
    - Every contributing-factor row must carry a Confidence tag
    - End each scoring section with a Confidence summary (✅ N / 🤔 M / ❓ K)
-   - Emit dynamic `/code-review` and `/review` suggestions based on thresholds
-6. **Fetch references** via `ctx7` (resolve library → query docs); max 3 calls
-7. **Generate Mermaid diagram** — `classDef` palette + legend subgraph + shape semantics are mandatory
-8. **Create PR**: `gh pr create --draft --title <title> --body-file <pr-body.md>`
+   - Emit dynamic `/code-review`, `/security-review`, and `/review` suggestions based on thresholds
+   - The `/security-review` suggestion fires on **presence of a security factor** (auth / secrets / payment / external API / migration), independent of the numeric Total — and is emitted **even under `--no-score`**
+6. **Generate Mermaid diagram** — `classDef` palette + legend subgraph + shape semantics are mandatory
+7. **Create PR**: `gh pr create --draft --title <title> --body-file <pr-body.md>`
 
 ### With `-p`
 
@@ -144,11 +134,11 @@ Do not invoke more than 3 `ctx7` calls per PR generation. See the `/find-docs` s
 2. **Write the entire PR body in Japanese** — title, overview, implementation details, testing steps, reviewer notes, score sections, Signal quality lists, and Mermaid node labels. No exceptions.
 3. Include concrete implementation details
 4. List concrete testing steps as a bulleted checklist
-5. Use `ctx7` for documentation URLs (see `/find-docs` for usage rules)
-6. Always include a Mermaid diagram (unless `--no-mermaid`)
-7. Always emit the two-line badge block + two trailing scoring sections (unless `--no-score`)
-8. Every contributing-factor row must carry a Confidence tag (✅ / 🤔 / ❓); end each section with `Signal quality: ✅ N confirmed · 🤔 M inferred · ❓ K speculative`
-9. Mermaid blocks must always include a `classDef` block and a Legend subgraph
+5. Always include a Mermaid diagram (unless `--no-mermaid`)
+6. Always emit the two-line badge block + two trailing scoring sections (unless `--no-score`)
+7. Every contributing-factor row must carry a Confidence tag (✅ / 🤔 / ❓); end each section with `Signal quality: ✅ N confirmed · 🤔 M inferred · ❓ K speculative`
+8. Mermaid blocks must always include a `classDef` block and a Legend subgraph
+9. When a security factor (auth / secrets / payment / external API / migration) is detected, **always** emit the `/security-review` suggestion line — even under `--no-score` (the security gate is not silenced by a formatting flag). Suppress it entirely when no security factor is present.
 
 ## Scoring System
 
@@ -258,11 +248,14 @@ Every contributing-factor row in the score tables must carry a Confidence tag, s
 
 ### Suggestion logic (printed at the end of the scoring block)
 
-| Condition                          | Output                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Cleanup Burden ≥ 50                | `> 💡 Run /code-review (Cleanup Burden {score} = {level}): {top reasons} — easy wins before merge` |
-| Total ≥ 65                         | `> 💡 Run /review (Review Attention {score} = {level}): self-review before assigning reviewers`    |
-| Total < 35 AND Cleanup Burden < 30 | (suppress — already a clean, low-risk PR)                                                          |
+| Condition                                                                      | Output                                                                                                                |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Security factor detected** (auth / secrets / payment / external API / migration) | `> 🔒 Run /security-review ({detected factors}): reviewer アサイン前にセキュリティ監査を推奨` — **always emitted, even under `--no-score`** |
+| Cleanup Burden ≥ 50                                                            | `> 💡 Run /code-review (Cleanup Burden {score} = {level}): {top reasons} — easy wins before merge`                   |
+| Total ≥ 65                                                                     | `> 💡 Run /review (Review Attention {score} = {level}): self-review before assigning reviewers`                      |
+| Total < 35 AND Cleanup Burden < 30                                             | (suppress — already a clean, low-risk PR; **but the security suggestion above still fires if a factor is present**)  |
+
+> **Security suggestion is independent of `--no-score`.** A formatting flag must never silence a security gate. When no security factor is present, the suggestion is suppressed entirely (no noise on docs-only PRs).
 
 ### Placement
 

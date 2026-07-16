@@ -1,4 +1,15 @@
+---
+name: vsdd-steering
+description: This skill should be used to bootstrap or refresh repository steering files, stack verification commands, conventions, structure, domain context, and open questions for VSDD.
+---
+
 # Skill: vsdd-steering
+
+## Mandatory execution routing
+
+Delegate all artifact work to a fresh `ecc-vsdd:vsdd-steering-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Never generate Steering with the invoking main model.
+
+When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, obey the bundled runtime contract: do not stop for routine confirmation and do not emit a phase-local confirmation gate. Persist reversible technical assumptions as `assumed`, never as `open` or `DRAFT`. Return `BLOCKED` instead of guessing when a decision affects product behavior, data loss, security, compatibility, destructive operations, or external authority.
 
 ## Invocation
 
@@ -63,7 +74,7 @@ Inspect the project for stack signals:
 | Test config          | `vitest.config.*`, `jest.config.*`, `spec/`, `*_test.go`, `pytest.ini`, ...                                                                         |
 | CI workflows         | `.github/workflows/*` — reveals the real verification commands                                                                                      |
 
-**Greenfield fallback**: if no manifests are found, skip detection and run the interview only — ask for the intended stack, project type(s), and verification commands. Set frontmatter `mode: interview`.
+**Greenfield fallback**: if no manifests are found, use the interview in standalone mode. In unattended mode, infer only from persisted source and repository evidence; return `BLOCKED` when the intended stack or verification commands cannot be established safely. Set frontmatter `mode: interview` or `mode: unattended-inference`.
 
 #### 3b. Draft the four sections
 
@@ -72,13 +83,15 @@ Inspect the project for stack signals:
 3. **Conventions** — error-handling policy, validation policy, import/naming rules, and other implementation rules detected from config or stated by the user. If the project keeps rules under `.claude/rules/`, link those files here instead of copying their content.
 4. **Verification Commands** — the exact lint / format / type-check / test commands (from package scripts, Makefile, Rake tasks, or CI).
 
-#### 3c. Interview confirm
+#### 3c. Confirm or record assumptions
 
-Present the draft to the user before writing:
+For standalone invocation, present the draft to the user before writing:
 
 - **Stack table**: confirm or correct rows (detection can mislabel roles).
 - **Design Viewpoints**: this is a judgment call — the user must approve which viewpoints every future `design.md` will be required to cover.
 - **Conventions / Verification Commands**: confirm; ask for anything detection could not see.
+
+For an orchestrated `vsdd-run`, validate the draft against manifests, CI, repository conventions, and supplied source material without pausing. Record every reversible technical assumption in the artifact. If the evidence leaves a product, data-loss, security, compatibility, destructive-operation, or external-authority decision unresolved, return `BLOCKED` with the exact question instead of writing a guessed answer.
 
 Frontmatter:
 
@@ -111,16 +124,16 @@ mode: auto
 
 Render each module as a row in a table. Preserve any `<!-- MANUAL:START -->` ... `<!-- MANUAL:END -->` section.
 
-### Step 5: Append draft entries to `context.md` (LLM)
+### Step 5: Append glossary entries to `context.md` (LLM)
 
-Preserve any existing content in `context.md`. For each module, if a relevant domain term is not yet defined, append a section tagged with `<!-- DRAFT YYYY-MM-DD -->`:
+Preserve any existing content in `context.md`. For each module, if a relevant domain term is not yet defined, append a section. Standalone uncertain entries use `<!-- DRAFT YYYY-MM-DD -->`. Unattended entries supported by repository evidence use `<!-- ASSUMED YYYY-MM-DD source:<path> -->`:
 
 ```markdown
 ### Supplier
 
 Wholesale electricity company. Connected to Consumer via a contract.
 
-<!-- DRAFT 2026-05-28 -->
+<!-- ASSUMED 2026-05-28 source:src/domain/supplier.ts -->
 ```
 
 Frontmatter:
@@ -132,7 +145,7 @@ mode: manual
 ---
 ```
 
-When the user confirms an entry during a grill session, the `<!-- DRAFT -->` marker is removed manually.
+Never leave a `DRAFT` marker at the unattended completion gate. Keep evidence-backed reversible entries as `ASSUMED`; leave high-impact uncertainty as DRAFT and return `BLOCKED`. When the user confirms an entry during a grill session, remove its marker manually.
 
 ### Step 6: Run detection rules → append to `open-questions.md`
 
@@ -152,8 +165,11 @@ Entry format:
 - Detected on: YYYY-MM-DD
 - Rule: <1-4>
 - Detail: <short>
+- Impact: technical|product|data-loss|security|compatibility|destructive|external-authority
 - Status: open
 ```
+
+In unattended mode, set reversible technical findings to `Status: assumed` and add `Assumption` plus `Evidence`. Leave every other finding `open` and return `BLOCKED`.
 
 ### Step 7: Emit diff report
 
@@ -165,7 +181,7 @@ If **one or more** new `Q-XXX` entries were added, append to stdout:
 ```
 ⚠ NEW OPEN QUESTIONS: <count>
 When this skill runs standalone, this is a warning only.
-When invoked from /vsdd-init, this halts the workflow.
+When invoked from an unattended run, every remaining `Status: open` entry halts the workflow.
 ```
 
 ---
@@ -176,8 +192,8 @@ Designed to be invoked internally by `/vsdd-init` (Phase 2 wiring):
 
 1. `/vsdd-init <slug>` starts.
 2. `/vsdd-steering` runs internally.
-3. New `Q-XXX` count is 0 → `/vsdd-init` continues.
-4. New `Q-XXX` count is ≥ 1 → workflow halts. User must grill or explicitly `dismiss` before resuming.
+3. The runtime preflight verifies that no `open` or `DRAFT` item remains.
+4. Evidence-backed reversible assumptions may continue as `assumed`; every remaining open item halts.
 
 (Phase 2: `/vsdd-requirements`, `/vsdd-design`, and the `/vsdd-review-*` skills also consume the steering files as read-only baselines.)
 

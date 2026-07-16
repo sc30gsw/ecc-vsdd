@@ -1,4 +1,15 @@
+---
+name: vsdd-tasks
+description: This skill should be used to convert approved VSDD requirements and design into traceable TDD-oriented TASK entries.
+---
+
 # vsdd-tasks
+
+## Mandatory execution routing
+
+Delegate all task authoring and revision to a fresh `ecc-vsdd:vsdd-tasks-worker` (Sonnet, `high`). When already running as that agent, execute the steps below inline and do not delegate again. Define what must be built and verified; do not prescribe dependencies, concurrency groups, or worktrees because the Phase 7 Dynamic Workflow infers them.
+
+When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior, ask no questions, and do not wait on `CONFIRM`. The persisted exact TASK-set gate and fresh Opus plan review replace manual confirmation.
 
 **Slash command**: `/vsdd-tasks <slug>`
 **Purpose**: Generate `tasks.md` (TASK-001..N) and `progress.md` from `requirements.md` and `design.md`.
@@ -125,7 +136,9 @@ Before writing the files, verify:
 3. No duplicate TASK-XXX IDs
 4. No TASK is missing an `Implements:` field
 
-If any check fails, report the gap and ask the user whether to auto-fill or stop.
+If a check fails in unattended mode, auto-fill a reversible traceability omission and validate again. Return `BLOCKED` when correction would change product scope or remains invalid. Ask the user whether to auto-fill or stop only in standalone mode.
+
+After writing, require deterministic preflight for `plan-review`; it must prove that TASK IDs in `tasks.md` exactly equal TASK IDs in the `progress.md` Tasks table.
 
 ---
 
@@ -142,6 +155,9 @@ Summary:
 - progress.md initialised with all tasks in pending state
 - Mode recorded as standard|auto in progress.md header
 
+[Standalone invocation only]
 ⏸ WAITING FOR CONFIRMATION
 Type `CONFIRM vsdd-review-plan` to proceed, or describe changes needed.
 ```
+
+Omit the standalone confirmation lines entirely when `execution_mode: unattended`; return the completion artifacts to the orchestrator immediately.

@@ -1,4 +1,13 @@
+---
+name: vsdd-review-requirements
+description: This skill should be used to independently review VSDD requirements for EARS quality, completeness, ambiguity, feasibility, acceptance criteria, and terminology drift.
+---
+
 # Skill: vsdd-review-requirements
+
+## Mandatory execution routing
+
+Delegate each review attempt to a new `ecc-vsdd:vsdd-requirements-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit `requirements.md`; write only the review artifact.
 
 ## Invocation
 
@@ -14,7 +23,7 @@
 
 ## Purpose
 
-Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, and missing edge cases. Writes a structured "Requirements Review" file to `.claude/specs/<slug>/review-results/requirement-review.md`. The mode is read from `progress.md` and determines which agents are invoked and which checks are run.
+Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, feasibility, terminology, and missing edge cases. Write a structured verdict to `.claude/specs/<slug>/review-results/requirement-review.md`. Mode changes presentation only; the pinned Opus reviewer and gate never change.
 
 ---
 
@@ -36,38 +45,9 @@ Read `.claude/specs/<slug>/requirements.md` in full.
 - If the file contains only the placeholder comment (`<!-- Artifact not yet generated... -->`), abort and instruct the user to run `/vsdd-requirements <slug>` first.
 - Count the number of REQ blocks for the review summary.
 
-### Step 3: Mode-specific review execution
+### Step 3: Independent review execution
 
-#### Standard Mode
-
-Invoke the following in sequence:
-
-1. **`requirements-analyst` agent** (primary)
-   - Focus: EARS compliance, acceptance criteria quality, stakeholder roles, ambiguity detection.
-   - Prompt: "Review the following requirements.md for EARS format compliance, ambiguous terms, missing acceptance criteria, and untestable criteria. Return a structured list of findings with REQ ID, issue description, severity, and suggested correction."
-
-2. **`ecc:planner` agent** (secondary)
-   - Focus: Scope boundaries, dependency risks, missing scenarios, implementation sequencing concerns.
-   - Prompt: "Review the following requirements for missing edge cases, scope gaps, inter-requirement conflicts, and sequencing risks. Return findings with REQ ID and impact."
-
-3. **`ecc:docs-lookup` agent** (stack documentation gathering)
-   - Focus: Fetch current documentation for each technology listed in `.claude/specs/_steering/tech.md` §1 Stack that is relevant to the requirements under review.
-   - Output: a summary of stack capabilities and known constraints to pass to the next agent.
-
-4. **`ecc:architect` agent** (technical feasibility judgment)
-   - Focus: Using the stack documentation gathered above, validate that each REQ is feasible. Flag any REQ whose acceptance criteria would require capabilities not supported by the stack, or would require significant architectural changes.
-   - Prompt: "Given the following stack documentation and requirements, identify any feasibility risks, missing architectural considerations, or REQs that would require significant changes to the current architecture."
-
-Merge all findings into a unified table.
-
-#### Auto Mode
-
-Invoke only:
-
-1. **`requirements-analyst` agent**
-   - Focus: Business clarity, acceptance criteria completeness, stakeholder roles, ambiguity, risks.
-   - Do NOT run the `ecc:planner` agent, `ecc:docs-lookup` agent, or `ecc:architect` agent.
-   - Prioritize findings that a non-engineer product owner can act on directly.
+Execute all checks in this file inside the single fresh pinned Opus reviewer. Consult authoritative stack documentation only when technical feasibility depends on a current external fact. Do not spawn inherited or ECC default reviewers whose model and effort are not pinned. Keep the review independent from the requirements author.
 
 ---
 
@@ -115,7 +95,7 @@ Scan all requirement text for vague qualifiers. Flag occurrences as **MEDIUM**:
 - IDs must be sequential with no gaps → **LOW**
 - Duplicate IDs → **HIGH**
 
-### Check 7: Technical Feasibility (Standard mode only)
+### Check 7: Technical Feasibility (all modes)
 
 - REQ requiring a non-existent API endpoint or interface → **HIGH**
 - REQ assuming a capability (e.g. real-time push, background processing) not present in `tech.md` §1 Stack → **MEDIUM**
@@ -138,6 +118,20 @@ If `.claude/specs/_steering/context.md` is missing, abort the review with: "Run 
 Write the following to `.claude/specs/<slug>/review-results/requirement-review.md`:
 
 ```markdown
+---
+review_type: requirements
+target_commit: N/A
+verdict: PASS|REVISE|BLOCKED
+critical: <integer>
+high: <integer>
+medium: <integer>
+low: <integer>
+remediation_mode: none
+reviewer_model: opus
+reviewer_effort: xhigh
+review_attempt: <1..3>
+---
+
 # Requirements Review: <slug>
 
 **Date**: <YYYY-MM-DD>
@@ -157,7 +151,7 @@ Write the following to `.claude/specs/<slug>/review-results/requirement-review.m
 | REQ-002 | <issue description> | MEDIUM   | <corrective action> |
 | REQ-003 | <issue description> | LOW      | <corrective action> |
 
-_Severity: HIGH = blocks implementation, MEDIUM = should fix before design, LOW = consider before PR_
+_Severity: CRITICAL/HIGH blocks the next phase; MEDIUM may proceed and remains visible; LOW is optional._
 
 ## Recommended Actions Before Proceeding
 
@@ -167,7 +161,7 @@ _Severity: HIGH = blocks implementation, MEDIUM = should fix before design, LOW 
 
 ## Sign-off Condition
 
-All HIGH severity findings must be resolved before running `/vsdd-design <slug>`.
+All CRITICAL/HIGH findings must be resolved before running `/vsdd-design <slug>`.
 ```
 
 ---
@@ -191,14 +185,14 @@ Also update `.claude/specs/<slug>/progress.md`:
 **Findings**: <N> total (M HIGH, N MEDIUM, P LOW)
 ```
 
-Change `vsdd-review-requirements` status from `⬜ not started` to `✅ complete`.
+Change `vsdd-review-requirements` status to `✅ complete` only for `verdict: PASS`; otherwise record `🔄 revise` or `⛔ blocked` with the attempt number.
 
 ---
 
 ## Notes
 
 - Do not modify `requirements.md`. This skill is read-only with respect to requirements. The user must update requirements separately and rerun this skill if needed.
-- If all checks pass with zero HIGH severity findings, state this clearly in the Overall Assessment section. The user may still choose to proceed immediately.
+- Set `PASS` only when CRITICAL and HIGH are both zero.
 - In `--mode auto`, present findings in plain language without jargon. Label each finding with its business impact rather than technical category (e.g. "Users won't know what to do if the upload fails" instead of "Missing error path for REQ-003").
 - If `review-results/requirement-review.md` already exists, overwrite it with the new review (each run replaces the prior review). The prior review is preserved in `change-log.md`.
 
@@ -211,10 +205,9 @@ Summary:
 - Mode read from progress.md
 - requirements.md loaded and analyzed (N REQs)
 - Checks run: EARS compliance, ambiguity, missing elements, testability, completeness, numbering, technical feasibility (standard only)
-- Agents invoked: requirements-analyst (both modes), ecc:planner + ecc:docs-lookup + ecc:architect agents (standard only)
+- Reviewer: fresh independent `ecc-vsdd:vsdd-requirements-reviewer` (Opus xhigh)
 - Findings written to review-results/requirement-review.md
 - change-log.md updated with finding count
 - progress.md updated: vsdd-review-requirements → complete
 
-⏸ WAITING FOR CONFIRMATION
-Type `CONFIRM vsdd-design` to proceed. Or describe changes needed.
+Gate: continue automatically only for `verdict: PASS`; otherwise revise with the Opus author and obtain a new fresh Opus review, up to three reviews total.
