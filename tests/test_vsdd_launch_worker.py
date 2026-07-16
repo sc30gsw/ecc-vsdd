@@ -116,6 +116,8 @@ class LaunchWorkerTest(unittest.TestCase):
         self.assertIn("never ask for permission or user input", prompt)
         self.assertIn("Read, Glob, or Grep rather than shell cat/sed/head/tail", prompt)
         self.assertIn("remain in this session until its completion notification", prompt)
+        self.assertIn("workflow_run_id", prompt)
+        self.assertIn("never reuse it as completion evidence", prompt)
 
     def test_unattended_tools_allow_safe_artifact_reads(self) -> None:
         self.assertIn("Read", launcher.UNATTENDED_ALLOWED_TOOLS)
@@ -129,6 +131,21 @@ class LaunchWorkerTest(unittest.TestCase):
 
         self.assertEqual(env["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
         self.assertEqual(env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
+
+    def test_plan_artifact_rejects_stale_content(self) -> None:
+        marker = {"sha256": "same", "size": 10, "mtime_ns": 1}
+
+        self.assertIn(
+            "did not produce new",
+            launcher.planning_artifact_issue("plan", marker, marker) or "",
+        )
+        self.assertIsNone(
+            launcher.planning_artifact_issue(
+                "plan",
+                marker,
+                {"sha256": "new", "size": 11, "mtime_ns": 2},
+            )
+        )
 
     def test_plan_launch_calls_runtime_preflight_before_claude(self) -> None:
         root, _ = self.make_repo()
@@ -260,7 +277,8 @@ class LaunchWorkerTest(unittest.TestCase):
             "path = Path('.claude/specs/sample/implementation-workflow.md')\n"
             "path.write_text('# Approved workflow candidate\\n', encoding='utf-8')\n"
             "print(json.dumps({'session_id': session_id, 'structured_output': "
-            "{'status': 'COMPLETE', 'stage': 'plan', 'summary': 'planned'}}))\n",
+            "{'status': 'COMPLETE', 'stage': 'plan', 'summary': 'planned', "
+            "'workflow_run_id': 'wf_test-plan'}}))\n",
             encoding="utf-8",
         )
         fake_claude.chmod(0o755)

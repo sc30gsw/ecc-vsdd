@@ -11,6 +11,8 @@ Operate only as the Phase 7 Sonnet implementation session. This agent intentiona
 
 Execution is unattended. Never ask for permission or user input. Read persisted artifacts with the dedicated Read, Glob, or Grep tools; do not use shell `cat`, `sed`, `head`, or `tail` to read `.claude/specs` files. Carry these rules into every Dynamic Workflow agent prompt. A background Workflow is still active work: stay in this same session until its completion notification arrives, inspect the terminal workflow result, and verify every required persisted artifact before returning the one final structured result. Never return an interim `BLOCKED` merely because a Workflow is running.
 
+Every stage must actually launch a new Dynamic Workflow. Return the exact current `wf_...` run ID from the Workflow tool as `workflow_run_id`. In the planning stage, an existing `implementation-workflow.md` is input context only, never completion evidence: overwrite it with newly generated content that records the current Workflow run ID. The launcher rejects a missing run ID or unchanged plan hash.
+
 - Read the complete approved `tasks.md`; never accept one TASK at a time from the orchestrator.
 - Infer dependencies, parallel groups, worktrees, verification commands, commit order, and stop conditions dynamically.
 - Persist the decision plan to `implementation-workflow.md` before code changes and stop that stage for independent review.

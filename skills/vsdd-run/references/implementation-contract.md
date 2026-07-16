@@ -6,6 +6,8 @@ Start a dedicated Sonnet session with `--effort ultracode` and `CLAUDE_CODE_SUBA
 
 The dedicated session and every Dynamic Workflow agent run unattended. They must never ask for permission or user input, must use Read/Glob/Grep instead of shell `cat`/`sed`/`head`/`tail` for persisted `.claude/specs` artifacts, and must remain alive until a background Workflow sends its completion notification. A running background Workflow is not a `BLOCKED` result. Inspect its terminal result and required files before returning the single final structured result.
 
+Every launcher stage must return the exact current Workflow tool run ID as `workflow_run_id`. Plan and plan-revision stages must persist newly generated content; an unchanged pre-existing `implementation-workflow.md` is never completion evidence. Record the current `wf_...` ID in the plan so the launcher can reject stale artifact reuse.
+
 Record:
 
 - inferred TASK dependency DAG;

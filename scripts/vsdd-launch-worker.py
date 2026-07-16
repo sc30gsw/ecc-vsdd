@@ -414,6 +414,37 @@ def planning_guard_fingerprint(worktree: Path, slug: str) -> str:
     return digest.hexdigest()
 
 
+def artifact_marker(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        content = path.read_bytes()
+        stat = path.stat()
+    except OSError as error:
+        fail(f"cannot fingerprint planning artifact {path}: {error}")
+    return {
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def planning_artifact_issue(
+    stage: str,
+    before: dict[str, object] | None,
+    after: dict[str, object] | None,
+) -> str | None:
+    if after is None or after.get("size") == 0:
+        return "implementation-workflow.md was not persisted"
+    if stage in {"plan", "revise-plan"} and before is not None:
+        if before.get("sha256") == after.get("sha256"):
+            return (
+                "current Dynamic Workflow did not produce new "
+                "implementation-workflow.md content"
+            )
+    return None
+
+
 def parse_frontmatter(path: Path) -> dict[str, str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -545,6 +576,8 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
         "remain in this session until its completion notification, inspect its terminal result, "
         "and verify the persisted artifacts before returning the final structured result. "
         "Return BLOCKED on unavailable Dynamic Workflows, missing evidence, or exhausted retries. "
+        "Return the exact current Workflow run ID (the wf_... value returned by the Workflow tool) "
+        "as workflow_run_id in the final structured result. "
         f"In the structured result, set stage exactly to {stage!r}."
     )
     prompts = {
@@ -554,7 +587,10 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
             "plan review. "
             f"Write {spec / 'implementation-workflow.md'} only. Infer the TASK DAG, parallel groups, "
             "worktrees, validation, commits, integration, and stop conditions. Do not edit product code, "
-            "tests, requirements, design, or tasks. Stop when the plan artifact is complete so an "
+            "tests, requirements, design, or tasks. Even if the plan artifact already exists, never "
+            "reuse it as completion evidence: run a new Workflow, overwrite it with newly generated "
+            "content, and record the current Workflow run ID in the document. Stop when the plan "
+            "artifact is complete so an "
             "independent Opus reviewer can inspect it. "
         ),
         "revise-plan": (
@@ -648,6 +684,12 @@ def main() -> None:
 
     before_paths = changed_paths(worktree)
     before_head = git_output(worktree, "rev-parse", "HEAD")
+    workflow_path = spec / "implementation-workflow.md"
+    workflow_marker_before = (
+        artifact_marker(workflow_path)
+        if args.stage in {"plan", "revise-plan"}
+        else None
+    )
     planning_fingerprint = (
         planning_guard_fingerprint(worktree, args.slug)
         if args.stage in {"plan", "revise-plan"}
@@ -695,8 +737,9 @@ def main() -> None:
             "stage": {"type": "string"},
             "summary": {"type": "string"},
             "blocked_tasks": {"type": "array", "items": {"type": "string"}},
+            "workflow_run_id": {"type": "string", "pattern": "^wf_[A-Za-z0-9-]+$"},
         },
-        "required": ["status", "stage", "summary"],
+        "required": ["status", "stage", "summary", "workflow_run_id"],
     }
     command = [
         claude,
@@ -891,6 +934,7 @@ def main() -> None:
     unexpected: list[str] = []
     planning_head_changed = False
     planning_content_changed = False
+    workflow_marker_after = None
     if args.stage in {"plan", "revise-plan"}:
         after_paths = changed_paths(worktree)
         newly_changed = after_paths - before_paths
@@ -903,6 +947,7 @@ def main() -> None:
         planning_content_changed = (
             planning_guard_fingerprint(worktree, args.slug) != planning_fingerprint
         )
+        workflow_marker_after = artifact_marker(workflow_path)
 
     try:
         response = json.loads(result.stdout)
@@ -920,6 +965,8 @@ def main() -> None:
             "unexpected_planning_changes": unexpected,
             "planning_head_changed": planning_head_changed,
             "planning_content_changed": planning_content_changed,
+            "workflow_marker_before": workflow_marker_before,
+            "workflow_marker_after": workflow_marker_after,
             "response": response,
         }
     )
@@ -947,14 +994,21 @@ def main() -> None:
         block_after_run("Claude worker session_id mismatch")
     if not isinstance(structured, dict):
         block_after_run("Claude worker returned no structured_output")
+    workflow_run_id = structured.get("workflow_run_id")
+    if not isinstance(workflow_run_id, str) or not re.fullmatch(
+        r"wf_[A-Za-z0-9-]+", workflow_run_id
+    ):
+        block_after_run("Claude worker returned no valid current workflow_run_id")
     if structured.get("status") == "BLOCKED":
         block_after_run("Dynamic Workflow reported BLOCKED")
     if structured.get("status") != "COMPLETE" or structured.get("stage") != args.stage:
         block_after_run("Claude worker returned an invalid structured result")
     if args.stage in {"plan", "revise-plan"}:
-        workflow_path = spec / "implementation-workflow.md"
-        if not workflow_path.is_file() or workflow_path.stat().st_size == 0:
-            block_after_run("implementation-workflow.md was not persisted")
+        artifact_issue = planning_artifact_issue(
+            args.stage, workflow_marker_before, workflow_marker_after
+        )
+        if artifact_issue:
+            block_after_run(artifact_issue)
     if args.stage == "plan":
         bind_implementation_session(spec / "run-state.json", session_id)
 
