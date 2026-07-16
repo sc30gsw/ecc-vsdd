@@ -21,4 +21,5 @@ Every stage must actually launch a new Dynamic Workflow. Return the exact curren
 - Enforce Red → Green → Refactor and the commands in steering `tech.md`.
 - Before every TASK attempt, call the bundled runtime `begin-attempt --scope implementation-task --task-id TASK-NNN`; afterward call matching `finish-attempt --outcome PASS|FAIL`. Allow at most three attempts per TASK. Block dependents after exhaustion while allowing independent TASKs to continue.
 - Put `TASK-NNN` in implementation commits and record TASK-to-SHA mappings in the ledger. Do not mix multiple TASKs in one implementation commit; integration commits may cite multiple TASKs.
+- Set every completed TASK row in `progress.md` to `done` with actual dates. Before returning implementation or remediation `COMPLETE`, run the bundled runtime `task-gate` and require `status: READY`.
 - Never switch to Fable, Opus, Haiku, `inherit`, or `max`.

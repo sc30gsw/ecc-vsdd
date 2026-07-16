@@ -132,6 +132,15 @@ class LaunchWorkerTest(unittest.TestCase):
         self.assertEqual(env["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
         self.assertEqual(env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
 
+    def test_implement_prompt_requires_progress_sync_and_task_gate(self) -> None:
+        root, _ = self.make_repo()
+
+        prompt = launcher.build_prompt("implement", "sample", ROOT, root)
+
+        self.assertIn("progress.md", prompt)
+        self.assertIn("status done", prompt)
+        self.assertIn("runtime task-gate", prompt)
+
     def test_plan_artifact_rejects_stale_content(self) -> None:
         marker = {"sha256": "same", "size": 10, "mtime_ns": 1}
 
@@ -146,6 +155,17 @@ class LaunchWorkerTest(unittest.TestCase):
                 {"sha256": "new", "size": 11, "mtime_ns": 2},
             )
         )
+
+    def test_plan_artifact_must_record_current_workflow_run_id(self) -> None:
+        root, spec = self.make_repo()
+        path = spec / "implementation-workflow.md"
+        path.write_text("# Plan\n\nWorkflow: wf_old\n", encoding="utf-8")
+
+        self.assertIn(
+            "does not record current",
+            launcher.workflow_evidence_issue(path, "wf_current") or "",
+        )
+        self.assertIsNone(launcher.workflow_evidence_issue(path, "wf_old"))
 
     def test_plan_launch_calls_runtime_preflight_before_claude(self) -> None:
         root, _ = self.make_repo()
@@ -275,7 +295,7 @@ class LaunchWorkerTest(unittest.TestCase):
             "session_id = sys.argv[sys.argv.index('--session-id') + 1]\n"
             "time.sleep(0.2)\n"
             "path = Path('.claude/specs/sample/implementation-workflow.md')\n"
-            "path.write_text('# Approved workflow candidate\\n', encoding='utf-8')\n"
+            "path.write_text('# Approved workflow candidate\\n\\nWorkflow: wf_test-plan\\n', encoding='utf-8')\n"
             "print(json.dumps({'session_id': session_id, 'structured_output': "
             "{'status': 'COMPLETE', 'stage': 'plan', 'summary': 'planned', "
             "'workflow_run_id': 'wf_test-plan'}}))\n",

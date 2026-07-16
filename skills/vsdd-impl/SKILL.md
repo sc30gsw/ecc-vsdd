@@ -86,6 +86,7 @@ Keep the approved `implementation-workflow.md` immutable and persist all runtime
 6. Commit implementation for exactly one `TASK-NNN` and record the SHA.
 7. Integrate according to the approved workflow plan.
 8. Run matching `finish-attempt --attempt <n> --outcome PASS`; on failure use `FAIL` before deciding whether another attempt is available.
+9. Update the TASK row in `progress.md` to `done` with actual start and completion dates after integration and PASS.
 
 Allow at most three attempts per TASK. Do not overlap unfinished attempts. The runtime changes the run to BLOCKED on the third FAIL. After exhaustion, mark the TASK blocked, do not start dependents, allow independent TASKs to continue, and append every attempt's cause, change, and evidence to `implementation-ledger.md`.
 
@@ -101,5 +102,6 @@ Require:
 - the integration worktree is clean after committed spec and implementation updates;
 - `progress.md`, `change-log.md`, immutable `implementation-workflow.md`, `implementation-ledger.md`, and `run-state.json` reflect the exact target commit.
 - deterministic preflight for `code-review` proves exact TASK equality, every TASK status `done`, and every mapped commit exists.
+- bundled runtime `task-gate` returns `status: READY` before the launcher accepts implementation or remediation `COMPLETE`.
 
 Print `VSDD RUN BLOCKED` with the TASK ID and evidence when the gate fails. On success, continue to separate fresh Opus code and security reviews.

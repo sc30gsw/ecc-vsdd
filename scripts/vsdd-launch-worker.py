@@ -445,6 +445,16 @@ def planning_artifact_issue(
     return None
 
 
+def workflow_evidence_issue(path: Path, workflow_run_id: str) -> str | None:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeError) as error:
+        return f"cannot verify workflow_run_id in planning artifact: {error}"
+    if workflow_run_id not in content:
+        return "implementation-workflow.md does not record current workflow_run_id"
+    return None
+
+
 def parse_frontmatter(path: Path) -> dict[str, str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -547,6 +557,34 @@ def require_runtime_preflight(
     return state
 
 
+def task_integrity_issue(
+    plugin_root: Path, worktree: Path, slug: str
+) -> str | None:
+    runtime = plugin_root / "scripts" / "vsdd-runtime-state.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(runtime),
+            "task-gate",
+            "--worktree",
+            str(worktree),
+            "--slug",
+            slug,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        outcome = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return "task-integrity gate returned invalid output"
+    if result.returncode or outcome.get("status") != "READY":
+        detail = outcome.get("error") or outcome.get("status") or result.stderr.strip()
+        return f"task-integrity gate blocked completion: {detail}"
+    return None
+
+
 def bind_implementation_session(state_path: Path, session_id: str) -> None:
     state = read_json(state_path)
     current = state.get("implementation_session_id")
@@ -606,14 +644,18 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
             f"Keep {spec / 'implementation-workflow.md'} immutable. Use Red-Green-Refactor, enforce "
             f"three attempts per TASK, and write evidence plus the exact TASK-to-SHA mapping to "
             f"{spec / 'implementation-ledger.md'}. Integrate independent successes and run every "
-            "steering verification command. "
+            "steering verification command. Update every completed TASK row in progress.md to "
+            "status done with its actual start and completion dates. Before returning COMPLETE, "
+            "run the bundled runtime task-gate and require its READY result. "
         ),
         "remediate": (
             "ultracode: Create and run a Dynamic Workflow to fix only unresolved CRITICAL/HIGH "
             f"findings in {spec / 'review-results' / 'code-review.md'} and "
             f"{spec / 'review-results' / 'security-review.md'}. Use TDD, keep the approved workflow "
             f"immutable, update {spec / 'implementation-ledger.md'}, and run every steering "
-            "verification command. Do not edit reviews. "
+            "verification command. Keep every completed TASK row in progress.md at status done, "
+            "then run the bundled runtime task-gate and require READY before returning COMPLETE. "
+            "Do not edit reviews. "
         ),
     }
     return prompts[stage] + common
@@ -1009,6 +1051,15 @@ def main() -> None:
         )
         if artifact_issue:
             block_after_run(artifact_issue)
+        evidence_issue = workflow_evidence_issue(workflow_path, workflow_run_id)
+        if evidence_issue:
+            block_after_run(evidence_issue)
+    if args.stage in {"implement", "remediate"}:
+        integrity_issue = task_integrity_issue(
+            plugin_root, worktree, args.slug
+        )
+        if integrity_issue:
+            block_after_run(integrity_issue)
     if args.stage == "plan":
         bind_implementation_session(spec / "run-state.json", session_id)
 

@@ -37,6 +37,8 @@ Before each TASK attempt, call the bundled runtime `begin-attempt --scope implem
 
 Require each implementation commit to name one `TASK-NNN`. Do not mix implementation for multiple TASKs in one commit. Allow integration commits to cite multiple TASKs. Record every TASK-to-SHA mapping in `implementation-ledger.md` under the exact heading `## TASK-to-SHA Mapping`.
 
+Before returning implementation or remediation `COMPLETE`, set every completed TASK row in `progress.md` to `done` with actual start and completion dates, then run bundled runtime command `task-gate --worktree <integration-worktree> --slug <slug>`. Require `status: READY`; treat any mismatch, unfinished attempt, missing/unreachable commit, or parser failure as `BLOCKED`.
+
 ## Review remediation
 
 Use a fresh Sonnet `high` ordinary remediation worker first. Use Sonnet `ultracode` immediately when either Opus report says `remediation_mode: workflow`, or on the second remediation round when blocking findings remain. Run fresh code and security Opus reviews after every round. Block after the initial review plus two remediation/re-review rounds.

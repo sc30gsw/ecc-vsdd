@@ -948,7 +948,7 @@ def ledger_mapping(text: str) -> tuple[list[str], dict[str, str]]:
     if not section:
         return [], {}
     pairs = re.findall(
-        r"(?im)^\s*\|\s*(TASK-\d{3})\s*\|\s*([0-9a-f]{7,40})\s*\|",
+        r"(?im)^\s*\|\s*(TASK-\d{3})\s*\|\s*`?([0-9a-f]{7,40})`?\s*\|",
         section.group(1),
     )
     identifiers = [identifier for identifier, _ in pairs]
@@ -1239,6 +1239,22 @@ def preflight(worktree: Path, slug: str, phase: str) -> dict:
     return {"status": "READY", "phase": phase}
 
 
+def task_gate(worktree: Path, slug: str) -> dict:
+    """Verify implementation bookkeeping before accepting a worker COMPLETE result."""
+    worktree = validate_repo(worktree.resolve())
+    state = read_state(worktree, slug)
+    issues: list[str] = []
+    if state.get("status") != "RUNNING":
+        issues.append(f"run-state status must be 'RUNNING'; got {state.get('status')!r}")
+    issues.extend(integration_issues(worktree, slug, state))
+    issues.extend(
+        task_set_issues(worktree, slug, require_ledger=True, state=state)
+    )
+    if issues:
+        raise RuntimeBlocked("; ".join(issues))
+    return {"status": "READY", "gate": "task-integrity"}
+
+
 def print_json(value: dict) -> None:
     print(json.dumps(value, ensure_ascii=False))
 
@@ -1274,7 +1290,7 @@ def main() -> None:
     finish.add_argument("--attempt", required=True, type=int)
     finish.add_argument("--outcome", required=True, choices=("PASS", "FAIL"))
 
-    for command in ("snapshot", "audit", "invalidate", "preflight"):
+    for command in ("snapshot", "audit", "invalidate", "preflight", "task-gate"):
         child = subparsers.add_parser(command)
         child.add_argument("--worktree", required=True, type=Path)
         child.add_argument("--slug", required=True)
@@ -1328,6 +1344,8 @@ def main() -> None:
             result = invalidate_state(
                 args.worktree, args.slug, args.from_phase, args.reason
             )
+        elif args.command == "task-gate":
+            result = task_gate(args.worktree, args.slug)
         else:
             result = preflight(args.worktree, args.slug, args.phase)
     except (RuntimeBlocked, OSError) as error:

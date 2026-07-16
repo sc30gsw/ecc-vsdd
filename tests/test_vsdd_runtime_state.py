@@ -336,12 +336,27 @@ class RuntimeStateTest(unittest.TestCase):
         (spec / "implementation-ledger.md").write_text(
             "## TASK-to-SHA Mapping\n\n"
             "| TASK | Commit |\n| --- | --- |\n"
-            f"| TASK-001 | {head} |\n",
+            f"| TASK-001 | `{head}` |\n",
             encoding="utf-8",
         )
 
         self.assertEqual(
             runtime.task_set_issues(root, "sample", require_ledger=True), []
+        )
+
+        git(root, "branch", "-m", "vsdd/sample")
+        self.write_run_state(root, spec)
+        state = runtime.read_state(root, "sample")
+        state.setdefault("attempt_ledger", {})["implementation-task:TASK-001"] = {
+            "attempts_started": 1,
+            "limit": 3,
+            "last_finished_attempt": 1,
+            "last_outcome": "PASS",
+        }
+        (spec / "run-state.json").write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(
+            runtime.task_gate(root, "sample"),
+            {"status": "READY", "gate": "task-integrity"},
         )
 
     def test_post_implementation_gate_rejects_unmerged_commit_objects(self) -> None:
