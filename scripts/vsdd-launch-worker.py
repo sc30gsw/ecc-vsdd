@@ -20,6 +20,15 @@ from pathlib import Path
 MIN_CLAUDE_VERSION = (2, 1, 203)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 STAGES = ("plan", "revise-plan", "implement", "remediate")
+UNATTENDED_ALLOWED_TOOLS = (
+    "Read",
+    "Glob",
+    "Grep",
+    "Write",
+    "Edit",
+    "Workflow",
+    "Bash(cat *)",
+)
 STAGE_PHASE = {
     "plan": "implementation-plan",
     "revise-plan": "implementation-plan",
@@ -530,13 +539,19 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
     common = (
         f"Work only in the integration worktree {worktree}. Feature slug: {slug}. "
         f"Read and obey {contract}. Never change models; every workflow agent must be Sonnet. "
+        "This is unattended execution: never ask for permission or user input. Read persisted "
+        "artifacts with Read, Glob, or Grep rather than shell cat/sed/head/tail. Ensure every "
+        "Dynamic Workflow agent receives the same rule. If Workflow launches in the background, "
+        "remain in this session until its completion notification, inspect its terminal result, "
+        "and verify the persisted artifacts before returning the final structured result. "
         "Return BLOCKED on unavailable Dynamic Workflows, missing evidence, or exhausted retries. "
         f"In the structured result, set stage exactly to {stage!r}."
     )
     prompts = {
         "plan": (
             "ultracode: Create and run a Dynamic Workflow that reads the complete approved "
-            f"{spec / 'tasks.md'}, requirements, design, steering, and plan review. "
+            f"{spec / 'tasks.md'}, {spec / 'progress.md'}, requirements, design, steering, and "
+            "plan review. "
             f"Write {spec / 'implementation-workflow.md'} only. Infer the TASK DAG, parallel groups, "
             "worktrees, validation, commits, integration, and stop conditions. Do not edit product code, "
             "tests, requirements, design, or tasks. Stop when the plan artifact is complete so an "
@@ -566,6 +581,16 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
         ),
     }
     return prompts[stage] + common
+
+
+def worker_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"
+    # Print mode otherwise terminates still-running Dynamic Workflows after 600s.
+    env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
+    env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
+    env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
+    return env
 
 
 def main() -> None:
@@ -682,6 +707,8 @@ def main() -> None:
         "ultracode",
         "--permission-mode",
         "auto",
+        "--allowedTools",
+        *UNATTENDED_ALLOWED_TOOLS,
     ]
     for child_plugin_dir in child_plugin_dirs:
         command.extend(["--plugin-dir", str(child_plugin_dir)])
@@ -716,6 +743,8 @@ def main() -> None:
                     "model": "sonnet",
                     "effort": "ultracode",
                     "subagent_model": "sonnet",
+                    "allowed_tools": list(UNATTENDED_ALLOWED_TOOLS),
+                    "background_wait_ceiling_ms": "0",
                     "plugin_dirs": [str(path) for path in child_plugin_dirs],
                     "detach": args.detach,
                     "resume": bool(args.session_id),
@@ -820,6 +849,8 @@ def main() -> None:
         "model": "sonnet",
         "effort": "ultracode",
         "subagent_model": "sonnet",
+        "allowed_tools": list(UNATTENDED_ALLOWED_TOOLS),
+        "background_wait_ceiling_ms": "0",
         "plugin_dirs": [str(path) for path in child_plugin_dirs],
         "started_from_session": args.session_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -828,10 +859,7 @@ def main() -> None:
         json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    env = os.environ.copy()
-    env["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"
-    env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
-    env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
+    env = worker_environment()
     try:
         result = subprocess.run(
             command,

@@ -9,6 +9,8 @@ skills:
 
 Operate only as the Phase 7 Sonnet implementation session. This agent intentionally has no `effort` frontmatter: the only supported entry point is the launcher, which starts the main session with `--effort ultracode` and forces every workflow subagent to Sonnet. Ultracode's effective reasoning level is `xhigh`; the runtime hook verifies that effective level.
 
+Execution is unattended. Never ask for permission or user input. Read persisted artifacts with the dedicated Read, Glob, or Grep tools; do not use shell `cat`, `sed`, `head`, or `tail` to read `.claude/specs` files. Carry these rules into every Dynamic Workflow agent prompt. A background Workflow is still active work: stay in this same session until its completion notification arrives, inspect the terminal workflow result, and verify every required persisted artifact before returning the one final structured result. Never return an interim `BLOCKED` merely because a Workflow is running.
+
 - Read the complete approved `tasks.md`; never accept one TASK at a time from the orchestrator.
 - Infer dependencies, parallel groups, worktrees, verification commands, commit order, and stop conditions dynamically.
 - Persist the decision plan to `implementation-workflow.md` before code changes and stop that stage for independent review.

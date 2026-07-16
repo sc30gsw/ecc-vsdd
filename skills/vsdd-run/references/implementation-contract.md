@@ -4,6 +4,8 @@
 
 Start a dedicated Sonnet session with `--effort ultracode` and `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` through the bundled detached launcher. Poll its exact supervisor evidence in foreground calls until terminal; reuse a live supervisor for the same stage after compaction or resume. Read the complete approved `tasks.md` and use a Dynamic Workflow to write `.claude/specs/<slug>/implementation-workflow.md` before changing code.
 
+The dedicated session and every Dynamic Workflow agent run unattended. They must never ask for permission or user input, must use Read/Glob/Grep instead of shell `cat`/`sed`/`head`/`tail` for persisted `.claude/specs` artifacts, and must remain alive until a background Workflow sends its completion notification. A running background Workflow is not a `BLOCKED` result. Inspect its terminal result and required files before returning the single final structured result.
+
 Record:
 
 - inferred TASK dependency DAG;

@@ -107,6 +107,29 @@ class LaunchWorkerTest(unittest.TestCase):
 
         self.assertEqual(plugin_dirs, [ecc_root.resolve(), ROOT.resolve()])
 
+    def test_plan_prompt_enforces_permission_safe_unattended_workflow(self) -> None:
+        root, spec = self.make_repo()
+
+        prompt = launcher.build_prompt("plan", "sample", ROOT, root)
+
+        self.assertIn(str(spec / "progress.md"), prompt)
+        self.assertIn("never ask for permission or user input", prompt)
+        self.assertIn("Read, Glob, or Grep rather than shell cat/sed/head/tail", prompt)
+        self.assertIn("remain in this session until its completion notification", prompt)
+
+    def test_unattended_tools_allow_safe_artifact_reads(self) -> None:
+        self.assertIn("Read", launcher.UNATTENDED_ALLOWED_TOOLS)
+        self.assertIn("Glob", launcher.UNATTENDED_ALLOWED_TOOLS)
+        self.assertIn("Grep", launcher.UNATTENDED_ALLOWED_TOOLS)
+        self.assertIn("Bash(cat *)", launcher.UNATTENDED_ALLOWED_TOOLS)
+        self.assertNotIn("Bash(*)", launcher.UNATTENDED_ALLOWED_TOOLS)
+
+    def test_worker_environment_waits_for_background_workflow_without_ceiling(self) -> None:
+        env = launcher.worker_environment()
+
+        self.assertEqual(env["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+        self.assertEqual(env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
+
     def test_plan_launch_calls_runtime_preflight_before_claude(self) -> None:
         root, _ = self.make_repo()
 
