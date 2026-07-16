@@ -178,7 +178,7 @@ Fableは成果物・コード・テスト・レビュー・PR本文を書きま�
 
 Startは`operation: bootstrap`を明示し、同梱runtimeの専用`bootstrap` commandで最初に`vsdd/<slug>` worktreeと`run-state.json`だけを作ります。この操作だけはPhase 0より前なのでSteeringを要求せず、そこで終了します。その後のSteeringと`operation: phase`のInitが正確なskeletonだけを消費します。既存worktreeとの衝突と、自分で作ったbootstrapの取り違えを機械的に区別します。
 
-各フェーズ前には同梱runtimeが成果物hash、必須の前段phase、構造化review snapshot、SteeringのOpen/DRAFT、固定`vsdd/<slug>` branch、TASK集合を再検証します。上流成果物を正規再生成してsnapshotした場合も、新しい現在phaseだけを完了に保ち、依存する旧review・設計・TASK・実装を無効化します。TASK commitはintegration `HEAD`のancestorでなければならず、Code/Security reviewは現在のfull SHAに一致するOpus PASSでなければPRへ進めません。
+各フェーズ前には同梱runtimeが成果物hash、必須の前段phase、構造化review snapshot、SteeringのOpen/DRAFT、固定`vsdd/<slug>` branch、TASK集合を再検証します。上流成果物を正規再生成してsnapshotした場合も、新しい現在phaseだけを完了に保ち、依存する旧review・設計・TASK・実装を無効化します。TASK commitはintegration `HEAD`のancestorでなければならず、Code/Security reviewは現在のfull SHAに一致し、同一の現行review attemptで作成されたOpus PASSでなければPRへ進めません。
 
 Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存もisolated childへ明示的に引き継いでからClaudeを起動します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
 

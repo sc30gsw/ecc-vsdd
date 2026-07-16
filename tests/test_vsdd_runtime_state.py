@@ -869,6 +869,39 @@ class RuntimeStateTest(unittest.TestCase):
         ):
             runtime.preflight(root, "sample", "remediation")
 
+    def test_pr_preflight_rejects_mixed_post_review_attempts(self) -> None:
+        root, spec = self.make_spec()
+        git(root, "branch", "-m", "vsdd/sample")
+        self.write_run_state(root, spec)
+        self.write_complete_steering(root)
+        head = self.write_completed_implementation(root, spec)
+        state = runtime.read_state(root, "sample")
+        state["phases"] = {"implementation": {"status": "COMPLETE"}}
+        (spec / "run-state.json").write_text(json.dumps(state), encoding="utf-8")
+        review_specs = (
+            ("requirements-review", "requirement-review.md", "requirements", "N/A"),
+            ("plan-review", "plan-review.md", "plan", "N/A"),
+            (
+                "implementation-plan-review",
+                "implementation-workflow-review.md",
+                "implementation-workflow",
+                "N/A",
+            ),
+            ("code-review", "code-review.md", "code", head),
+            ("security-review", "security-review.md", "security", head),
+        )
+        for phase, filename, review_type, target in review_specs:
+            self.write_review(spec, filename, review_type, target)
+            self.begin_review_attempt(root, phase)
+            runtime.snapshot_phase(root, "sample", phase)
+
+        runtime.begin_attempt(root, "sample", "post-implementation-review")
+        self.write_review(spec, "code-review.md", "code", head, attempt=2)
+        runtime.snapshot_phase(root, "sample", "code-review")
+
+        with self.assertRaisesRegex(runtime.RuntimeBlocked, "same review_attempt"):
+            runtime.preflight(root, "sample", "pr")
+
     def test_review_snapshot_enforces_opus_and_verdict_status(self) -> None:
         root, spec = self.make_spec()
         self.write_run_state(root, spec)

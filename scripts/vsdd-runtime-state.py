@@ -1146,6 +1146,32 @@ def review_state_issues(
     return issues
 
 
+def post_review_pair_issues(state: dict) -> list[str]:
+    """Require Code and Security evidence from the same current review round."""
+    phases = state.get("phases", {})
+    code_attempt = phases.get("code-review", {}).get("review_attempt")
+    security_attempt = phases.get("security-review", {}).get("review_attempt")
+    issues: list[str] = []
+    if code_attempt != security_attempt:
+        issues.append(
+            "code-review and security-review must use the same review_attempt; "
+            f"got {code_attempt!r} and {security_attempt!r}"
+        )
+        return issues
+    ledger = state.get("attempt_ledger", {}).get("post-implementation-review")
+    if not isinstance(ledger, dict):
+        return ["post-implementation-review attempt ledger is missing"]
+    started = int(ledger.get("attempts_started", 0))
+    finished = int(ledger.get("last_finished_attempt", 0))
+    if code_attempt != started or finished != started:
+        issues.append(
+            "Code/Security review evidence must match the current finished "
+            f"post-implementation-review attempt {started}; got pair {code_attempt!r} "
+            f"and finished {finished}"
+        )
+    return issues
+
+
 def phase_prerequisite_issues(
     worktree: Path, slug: str, phase: str, state: dict
 ) -> list[str]:
@@ -1178,6 +1204,9 @@ def phase_prerequisite_issues(
             issues.append("remediation cannot proceed from a BLOCKED review")
         elif verdicts and "REVISE" not in verdicts:
             issues.append("remediation requires at least one REVISE review")
+        issues.extend(post_review_pair_issues(state))
+    elif phase == "pr":
+        issues.extend(post_review_pair_issues(state))
     return issues
 
 

@@ -41,7 +41,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" preflight \
 - `INVALIDATED`: return to `earliest_phase`; never launch the originally requested phase.
 - `BLOCKED`: stop and report the exact evidence.
 
-Preflight also requires every direct prerequisite phase to be `COMPLETE`. Review prerequisites require a deterministic artifact snapshot with `verdict: PASS`; code and security review snapshots must target the current integration `HEAD`. PR preflight requires Requirements, Plan, Implementation Workflow, Code, and Security reviews all to remain PASS and current. A new commit after review therefore returns `BLOCKED` until fresh Opus reviews are snapshotted.
+Preflight also requires every direct prerequisite phase to be `COMPLETE`. Review prerequisites require a deterministic artifact snapshot with `verdict: PASS`; code and security review snapshots must target the current integration `HEAD`, carry the same `review_attempt`, and match the current finished `post-implementation-review` ledger entry. PR preflight requires Requirements, Plan, Implementation Workflow, Code, and Security reviews all to remain PASS and current. A new commit after review therefore returns `BLOCKED` until fresh Opus reviews are snapshotted.
 
 After a phase artifact passes its completion gate:
 
