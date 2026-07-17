@@ -883,6 +883,7 @@ class RuntimeStateTest(unittest.TestCase):
         self.write_complete_steering(root)
         head = self.write_completed_implementation(root, spec)
         state = runtime.read_state(root, "sample")
+        state["until"] = "pr"
         state["phases"] = {"implementation": {"status": "COMPLETE"}}
         (spec / "run-state.json").write_text(json.dumps(state), encoding="utf-8")
         review_specs = (
@@ -926,6 +927,12 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(state["reached"], "review")
         self.assertEqual(state["current_phase"], "security-review")
         self.assertIn("completed_at", state)
+
+    def test_pr_preflight_requires_an_explicit_pr_boundary(self) -> None:
+        root, _, _ = self.prepare_review_complete_run()
+
+        with self.assertRaisesRegex(runtime.RuntimeBlocked, "explicit until 'pr'"):
+            runtime.preflight(root, "sample", "pr")
 
     def test_review_completion_rejects_drift_detected_by_preflight(self) -> None:
         root, spec, _ = self.prepare_review_complete_run()

@@ -1213,7 +1213,13 @@ def phase_prerequisite_issues(
     return issues
 
 
-def preflight(worktree: Path, slug: str, phase: str) -> dict:
+def preflight(
+    worktree: Path,
+    slug: str,
+    phase: str,
+    *,
+    enforce_requested_boundary: bool = True,
+) -> dict:
     if phase not in PHASE_INDEX:
         raise RuntimeBlocked(f"unknown preflight phase: {phase}")
     worktree = validate_repo(worktree.resolve())
@@ -1224,6 +1230,14 @@ def preflight(worktree: Path, slug: str, phase: str) -> dict:
     issues: list[str] = []
     if state.get("status") != "RUNNING":
         issues.append(f"run-state status must be 'RUNNING'; got {state.get('status')!r}")
+    if (
+        phase == "pr"
+        and enforce_requested_boundary
+        and state.get("until") != "pr"
+    ):
+        issues.append(
+            f"PR phase requires explicit until 'pr'; got {state.get('until')!r}"
+        )
     issues.extend(integration_issues(worktree, slug, state))
     if phase != "steering":
         issues.extend(steering_issues(worktree, slug))
@@ -1366,7 +1380,12 @@ def complete_run(worktree: Path, slug: str, reached: str) -> dict:
             f"completion boundary {reached!r} does not match run until {state.get('until')!r}"
         )
 
-    readiness = preflight(worktree, slug, "pr")
+    readiness = preflight(
+        worktree,
+        slug,
+        "pr",
+        enforce_requested_boundary=reached == "pr",
+    )
     if readiness.get("status") != "READY":
         raise RuntimeBlocked(
             f"completion preflight invalidated {readiness.get('earliest_phase')}; "

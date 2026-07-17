@@ -18,13 +18,14 @@ class ModelGuardTest(unittest.TestCase):
         payload: dict,
         *arguments: str,
         data_root: str | None = None,
+        plugin_root: Path = ROOT,
         **environment: str,
     ) -> subprocess.CompletedProcess[str]:
         data_root = data_root or tempfile.mkdtemp(prefix="ecc-vsdd-model-guard-")
         env = os.environ.copy()
         env.update(
             {
-                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "CLAUDE_PLUGIN_ROOT": str(plugin_root),
                 "TMPDIR": data_root,
             }
         )
@@ -192,6 +193,68 @@ class ModelGuardTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("foreground", result.stderr)
+
+    def test_orchestrator_rejects_shell_expansion_in_launcher_arguments(self) -> None:
+        payload = self.orchestrator_launch()
+        payload["tool_name"] = "Bash"
+        payload["tool_input"] = {
+            "command": (
+                f'python3 "{ROOT / "scripts" / "vsdd-launch-worker.py"}" '
+                "plan --slug sample --worktree '/tmp/{sample,other}'"
+            )
+        }
+
+        result = self.run_guard(payload)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("control operators", result.stderr)
+
+    def test_pr_worker_launch_requires_context_and_ready_preflight(self) -> None:
+        missing = self.orchestrator_launch()
+        missing["tool_input"] = {"subagent_type": "ecc-vsdd:vsdd-pr-worker"}
+        rejected = self.run_guard(missing)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("VSDD_RUN_CONTEXT", rejected.stderr)
+
+        fixture = Path(tempfile.mkdtemp(prefix="ecc-vsdd-pr-gate-"))
+        plugin_root = fixture / "plugin"
+        worktree = fixture / "worktree"
+        (plugin_root / "agents").mkdir(parents=True)
+        (plugin_root / "scripts").mkdir()
+        worktree.mkdir()
+        run_state = worktree / ".claude" / "specs" / "sample" / "run-state.json"
+        run_state.parent.mkdir(parents=True)
+        run_state.write_text("{}\n", encoding="utf-8")
+        for filename in ("vsdd-orchestrator.md", "vsdd-pr-worker.md"):
+            (plugin_root / "agents" / filename).write_text(
+                (ROOT / "agents" / filename).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+        (plugin_root / "scripts" / "vsdd-runtime-state.py").write_text(
+            "import json\nprint(json.dumps({'status': 'READY', 'phase': 'pr'}))\n",
+            encoding="utf-8",
+        )
+        allowed = self.orchestrator_launch()
+        allowed["tool_input"] = {
+            "subagent_type": "ecc-vsdd:vsdd-pr-worker",
+            "prompt": (
+                "VSDD_RUN_CONTEXT\n"
+                "schema_version: 1\n"
+                "execution_mode: unattended\n"
+                "operation: phase\n"
+                "slug: sample\n"
+                f"integration_worktree: {worktree}\n"
+                f"run_state: {run_state}\n"
+                "phase: pr\n"
+                "attempt: 1\n"
+                "source_paths: none\n"
+                "END_VSDD_RUN_CONTEXT\n"
+            ),
+        }
+
+        self.assert_strict_allow(
+            self.run_guard(allowed, plugin_root=plugin_root)
+        )
 
     def test_orchestrator_allows_detached_launcher_poll_protocol(self) -> None:
         launcher_path = ROOT / "scripts" / "vsdd-launch-worker.py"

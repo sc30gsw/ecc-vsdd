@@ -58,6 +58,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" extend \
   --worktree <absolute-integration-worktree> --slug <slug> --until pr
 ```
 
+The strict control-plane hook independently parses the PR worker's `VSDD_RUN_CONTEXT` and runs `preflight --phase pr` before allowing that agent launch. The runtime requires top-level `until: pr` plus current review, commit, steering, and TASK evidence. Missing consent or stale evidence must prevent the external worker from starting.
+
 After a phase artifact passes its completion gate:
 
 ```text

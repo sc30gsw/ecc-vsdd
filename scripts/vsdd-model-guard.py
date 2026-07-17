@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -55,6 +56,7 @@ ORCHESTRATOR_TOOLS = {"Read", "Grep", "Glob", "LS", "Skill", "Agent", "Task"}
 ORCHESTRATOR_AGENTS = WORKERS - {"ecc-vsdd:vsdd-implementation-driver"}
 ORCHESTRATOR_SKILLS = {"ecc-vsdd:vsdd-run", "vsdd-run"}
 AUTHORIZATION_TTL_SECONDS = 7 * 24 * 60 * 60
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def deny(message: str) -> None:
@@ -339,9 +341,82 @@ def check_subagent_model_overrides(tool_input: dict) -> None:
         )
 
 
+def run_context_fields(prompt: object) -> dict[str, str]:
+    match = re.search(
+        r"(?ms)(?:^|\n)VSDD_RUN_CONTEXT\s*\n(.*?)^END_VSDD_RUN_CONTEXT\s*$",
+        str(prompt or ""),
+    )
+    if not match:
+        deny("PR worker launch requires a VSDD_RUN_CONTEXT envelope")
+    fields: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def check_pr_launch(tool_input: dict) -> None:
+    """Require persisted PR consent and current review gates before agent launch."""
+    fields = run_context_fields(tool_input.get("prompt"))
+    slug = fields.get("slug", "")
+    raw_worktree = fields.get("integration_worktree", "")
+    raw_state = fields.get("run_state", "")
+    if (
+        fields.get("schema_version") != "1"
+        or fields.get("execution_mode") != "unattended"
+        or fields.get("operation") != "phase"
+        or fields.get("phase") != "pr"
+        or not SLUG_RE.fullmatch(slug)
+    ):
+        deny("PR worker launch context is invalid")
+    worktree = Path(raw_worktree)
+    if not worktree.is_absolute() or not worktree.is_dir():
+        deny("PR worker launch requires an existing absolute integration worktree")
+    worktree = worktree.resolve()
+    expected_state = worktree / ".claude" / "specs" / slug / "run-state.json"
+    state_path = Path(raw_state)
+    if not state_path.is_absolute() or state_path.resolve() != expected_state:
+        deny("PR worker launch run_state does not match its slug and worktree")
+
+    runtime = (
+        Path(os.environ.get("CLAUDE_PLUGIN_ROOT", ""))
+        / "scripts"
+        / "vsdd-runtime-state.py"
+    ).resolve()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(runtime),
+                "preflight",
+                "--worktree",
+                str(worktree),
+                "--slug",
+                slug,
+                "--phase",
+                "pr",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        deny(f"cannot run PR launch preflight: {error}")
+    try:
+        evidence = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        evidence = {}
+    if result.returncode or evidence != {"status": "READY", "phase": "pr"}:
+        detail = (result.stderr or result.stdout or "runtime rejected PR launch").strip()
+        deny(f"PR worker launch preflight failed: {detail[:500]}")
+
+
 def check_launcher(command: object) -> None:
     raw_command = str(command or "")
-    if any(character in raw_command for character in "\r\n;|&<>"):
+    if any(character in raw_command for character in "\r\n;|&<>{}*?[]~"):
         deny("shell control operators are prohibited in the VSDD launcher command")
     if "$(" in raw_command or "`" in raw_command:
         deny("shell command substitution is prohibited in the VSDD launcher command")
@@ -493,6 +568,8 @@ def main() -> None:
         if requested not in ORCHESTRATOR_AGENTS:
             deny(f"Fable cannot launch unpinned agent {requested!r}")
         check_pinned_agent_definition(requested)
+        if requested == "ecc-vsdd:vsdd-pr-worker":
+            check_pr_launch(tool_input)
 
     if strict:
         authorize_strict_session(payload)

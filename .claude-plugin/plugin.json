@@ -1,6 +1,6 @@
 {
   "name": "ecc-vsdd",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "VSDDワークフロー — Fable制御、決定的な無人実行gate、Sonnet Dynamic Workflow、独立Opusレビューによる再開可能な自動開発",
   "author": {
     "name": "sc30gsw"
