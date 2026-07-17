@@ -847,6 +847,9 @@ def invalidate_state(
     current["status"] = "RUNNING"
     current["current_phase"] = from_phase
     current["blocker"] = None
+    current.pop("reached", None)
+    current.pop("completed_at", None)
+    current.pop("review_completed_at", None)
     write_state_atomic(worktree, slug, current)
     return {"status": "INVALIDATED", "earliest_phase": from_phase, "phases": changed}
 
@@ -1255,6 +1258,179 @@ def task_gate(worktree: Path, slug: str) -> dict:
     return {"status": "READY", "gate": "task-integrity"}
 
 
+def pr_snapshot_issues(worktree: Path, slug: str, state: dict) -> list[str]:
+    try:
+        path, metadata = validate_pr_artifact(worktree, slug, state)
+    except RuntimeBlocked as error:
+        return [str(error)]
+    entry = state.get("phases", {}).get("pr", {})
+    key = relative_path(worktree, path)
+    digest = digest_path(path)
+    record = state.get("artifact_hashes", {}).get(key)
+    issues: list[str] = []
+    if entry.get("status") != "COMPLETE":
+        issues.append(f"pr state status must be 'COMPLETE'; got {entry.get('status')!r}")
+    if entry.get("target_commit") != metadata["target_commit"]:
+        issues.append("pr state target_commit does not match pr-result.json")
+    if not isinstance(record, dict) or record.get("owner_phase") != "pr":
+        issues.append("pr lacks a deterministic artifact snapshot")
+    elif record.get("sha256") != digest:
+        issues.append("pr artifact snapshot does not match disk")
+    if entry.get("output_hashes", {}).get(key) != digest:
+        issues.append("pr output hash does not match disk")
+    return issues
+
+
+def terminal_completion_issues(
+    worktree: Path, slug: str, state: dict, reached: str
+) -> tuple[str | None, list[str]]:
+    """Revalidate a closed run against mutable repository and steering state."""
+    grouped: list[tuple[str, list[str]]] = [
+        ("init", integration_issues(worktree, slug, state)),
+        ("steering", steering_issues(worktree, slug)),
+        (
+            "tasks",
+            task_set_issues(worktree, slug, require_ledger=True, state=state),
+        ),
+    ]
+    for prerequisite in PHASE_PREREQUISITES["pr"]:
+        if prerequisite in REVIEW_PHASES:
+            issues = review_state_issues(
+                worktree,
+                slug,
+                prerequisite,
+                state,
+                required_verdict="PASS",
+            )
+        else:
+            status = state.get("phases", {}).get(prerequisite, {}).get("status")
+            issues = (
+                []
+                if status == "COMPLETE"
+                else [
+                    f"terminal completion requires {prerequisite} status "
+                    f"'COMPLETE'; got {status!r}"
+                ]
+            )
+        grouped.append((prerequisite, issues))
+    grouped.append(("code-review", post_review_pair_issues(state)))
+    if reached == "pr":
+        grouped.append(("pr", pr_snapshot_issues(worktree, slug, state)))
+
+    failures = [(phase, issues) for phase, issues in grouped if issues]
+    if not failures:
+        return None, []
+    earliest = min(failures, key=lambda item: PHASE_INDEX[item[0]])[0]
+    return earliest, [issue for _, issues in failures for issue in issues]
+
+
+def complete_run(worktree: Path, slug: str, reached: str) -> dict:
+    """Close a run only after deterministic evidence reaches its requested boundary."""
+    worktree = validate_repo(worktree.resolve())
+    if reached not in {"review", "pr"}:
+        raise RuntimeBlocked("completion boundary must be 'review' or 'pr'")
+    state = read_state(worktree, slug)
+    if state.get("status") == "COMPLETE":
+        if state.get("reached") == reached:
+            audit = audit_state(worktree, slug)
+            if audit["status"] != "VALID":
+                raise RuntimeBlocked(
+                    "run artifacts changed; resume from the invalidated phase"
+                )
+            state = read_state(worktree, slug)
+            earliest, issues = terminal_completion_issues(
+                worktree, slug, state, reached
+            )
+            if earliest is not None:
+                invalidate_state(
+                    worktree,
+                    slug,
+                    earliest,
+                    "terminal completion evidence changed: " + "; ".join(issues),
+                    state=state,
+                )
+                raise RuntimeBlocked(
+                    f"terminal completion evidence invalidated {earliest}; "
+                    "resume from the invalidated phase"
+                )
+            return {"status": "COMPLETE", "reached": reached, "idempotent": True}
+        raise RuntimeBlocked(
+            f"run already completed at {state.get('reached')!r}; extend it explicitly"
+        )
+    if state.get("status") != "RUNNING":
+        raise RuntimeBlocked(
+            f"run-state status must be 'RUNNING'; got {state.get('status')!r}"
+        )
+    if state.get("until") != reached:
+        raise RuntimeBlocked(
+            f"completion boundary {reached!r} does not match run until {state.get('until')!r}"
+        )
+
+    readiness = preflight(worktree, slug, "pr")
+    if readiness.get("status") != "READY":
+        raise RuntimeBlocked(
+            f"completion preflight invalidated {readiness.get('earliest_phase')}; "
+            "resume from the invalidated phase"
+        )
+    state = read_state(worktree, slug)
+    if reached == "pr":
+        issues = pr_snapshot_issues(worktree, slug, state)
+        if issues:
+            raise RuntimeBlocked("; ".join(issues))
+
+    state["status"] = "COMPLETE"
+    state["current_phase"] = "security-review" if reached == "review" else "pr"
+    state["reached"] = reached
+    state["completed_at"] = now()
+    state["blocker"] = None
+    write_state_atomic(worktree, slug, state)
+    return {"status": "COMPLETE", "reached": reached, "idempotent": False}
+
+
+def extend_run(worktree: Path, slug: str, until: str) -> dict:
+    """Reopen a review-complete run only for an explicitly authorized PR target."""
+    worktree = validate_repo(worktree.resolve())
+    if until != "pr":
+        raise RuntimeBlocked("the only supported extension target is 'pr'")
+    audit = audit_state(worktree, slug)
+    if audit["status"] != "VALID":
+        raise RuntimeBlocked("run artifacts changed; resume from the invalidated phase")
+    state = read_state(worktree, slug)
+    if state.get("status") == "RUNNING" and state.get("until") == "pr":
+        return {"status": "RUNNING", "until": "pr", "idempotent": True}
+    if not (
+        state.get("status") == "COMPLETE"
+        and state.get("reached") == "review"
+        and state.get("until") == "review"
+    ):
+        raise RuntimeBlocked(
+            "only a review-complete run can be extended to the PR boundary"
+        )
+    earliest, issues = terminal_completion_issues(worktree, slug, state, "review")
+    if earliest is not None:
+        invalidate_state(
+            worktree,
+            slug,
+            earliest,
+            "review extension evidence changed: " + "; ".join(issues),
+            state=state,
+        )
+        raise RuntimeBlocked(
+            f"review extension evidence invalidated {earliest}; "
+            "resume from the invalidated phase"
+        )
+
+    state["review_completed_at"] = state.get("completed_at")
+    state.pop("completed_at", None)
+    state.pop("reached", None)
+    state["status"] = "RUNNING"
+    state["until"] = "pr"
+    state["current_phase"] = "pr"
+    state["blocker"] = None
+    write_state_atomic(worktree, slug, state)
+    return {"status": "RUNNING", "until": "pr", "idempotent": False}
+
+
 def print_json(value: dict) -> None:
     print(json.dumps(value, ensure_ascii=False))
 
@@ -1290,7 +1466,15 @@ def main() -> None:
     finish.add_argument("--attempt", required=True, type=int)
     finish.add_argument("--outcome", required=True, choices=("PASS", "FAIL"))
 
-    for command in ("snapshot", "audit", "invalidate", "preflight", "task-gate"):
+    for command in (
+        "snapshot",
+        "audit",
+        "invalidate",
+        "preflight",
+        "task-gate",
+        "complete",
+        "extend",
+    ):
         child = subparsers.add_parser(command)
         child.add_argument("--worktree", required=True, type=Path)
         child.add_argument("--slug", required=True)
@@ -1306,6 +1490,10 @@ def main() -> None:
             child.add_argument("--reason", required=True)
         elif command == "preflight":
             child.add_argument("--phase", required=True, choices=PHASE_ORDER)
+        elif command == "complete":
+            child.add_argument("--reached", required=True, choices=("review", "pr"))
+        elif command == "extend":
+            child.add_argument("--until", required=True, choices=("pr",))
 
     args = parser.parse_args()
     try:
@@ -1346,6 +1534,10 @@ def main() -> None:
             )
         elif args.command == "task-gate":
             result = task_gate(args.worktree, args.slug)
+        elif args.command == "complete":
+            result = complete_run(args.worktree, args.slug, args.reached)
+        elif args.command == "extend":
+            result = extend_run(args.worktree, args.slug, args.until)
         else:
             result = preflight(args.worktree, args.slug, args.phase)
     except (RuntimeBlocked, OSError) as error:

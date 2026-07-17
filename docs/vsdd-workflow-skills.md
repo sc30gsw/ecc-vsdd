@@ -27,7 +27,7 @@ Plugin agentは`agents/`に同梱します。直接Skillを実行した場合も
 
 ```text
 /ecc-vsdd:vsdd-run start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr]
-/ecc-vsdd:vsdd-run resume <slug> [source]
+/ecc-vsdd:vsdd-run resume <slug> [source] [--until pr]
 /ecc-vsdd:vsdd-run status <slug>
 /ecc-vsdd:vsdd-run cancel <slug>
 /ecc-vsdd:vsdd-run cleanup <slug>
@@ -35,7 +35,7 @@ Plugin agentは`agents/`に同梱します。直接Skillを実行した場合も
 
 再開可能な状態機械です。Fableは固定fieldを読んで次phaseを選び、専用workerを起動します。成果物を自分で作りません。
 
-`start`は`operation: bootstrap`としてbundled runtimeの`bootstrap` commandだけを実行します。実際のrepository default（または明示`--base`）を検出し、base ref/branch/SHAを保存してから`vsdd/<slug>`と専用integration worktreeを作り、この時点のfeature specを`bootstrap_status: READY`の`run-state.json`だけにします。Phase 0より前なのでこのinvocationはSteeringを要求せず終了します。Steering後の別`operation: phase` Initが正確なbootstrap identityを検証してskeletonを作り、`CONSUMED`へ遷移します。曖昧でも`main`を仮定しません。`resume`はhashとcommitを再検証し、staleなphaseと下流を無効化します。source引数を付けたresumeは既存skeletonを保ったままsourceを更新し、Requirements以降を再実行します。
+`start`は`operation: bootstrap`としてbundled runtimeの`bootstrap` commandだけを実行します。実際のrepository default（または明示`--base`）を検出し、base ref/branch/SHAを保存してから`vsdd/<slug>`と専用integration worktreeを作り、この時点のfeature specを`bootstrap_status: READY`の`run-state.json`だけにします。Phase 0より前なのでこのinvocationはSteeringを要求せず終了します。Steering後の別`operation: phase` Initが正確なbootstrap identityを検証してskeletonを作り、`CONSUMED`へ遷移します。曖昧でも`main`を仮定しません。`resume`はhashとcommitを再検証し、staleなphaseと下流を無効化します。source引数を付けたresumeは既存skeletonを保ったままsourceを更新し、Requirements以降を再実行します。terminal gateは要求境界でtop-level `COMPLETE`を保存し、Review完了後の明示`--until pr`だけが`extend` gateでPhase 9へ再オープンします。
 
 Skill frontmatterの`PreToolUse` hookはFableに対して次を機械的に拒否します。
 

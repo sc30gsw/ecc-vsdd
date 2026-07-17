@@ -7,7 +7,10 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 
@@ -51,11 +54,150 @@ WORKERS = set(EXPECTED_EFFORT) - {"ecc-vsdd:vsdd-orchestrator"}
 ORCHESTRATOR_TOOLS = {"Read", "Grep", "Glob", "LS", "Skill", "Agent", "Task"}
 ORCHESTRATOR_AGENTS = WORKERS - {"ecc-vsdd:vsdd-implementation-driver"}
 ORCHESTRATOR_SKILLS = {"ecc-vsdd:vsdd-run", "vsdd-run"}
+AUTHORIZATION_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def deny(message: str) -> None:
     print(f"VSDD control-plane guard: {message}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def allow_validated_tool(authorized: bool) -> None:
+    """Skip prompts only for a validated strict or orchestrator-authorized call."""
+    if not authorized:
+        return
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": (
+                        "ecc-vsdd validated the pinned agent, model, effort, and tool scope"
+                    ),
+                }
+            }
+        )
+    )
+
+
+def guard_runtime_root() -> Path:
+    """Return a user-private, session-lifetime state root shared by hook types."""
+    user_id = str(os.getuid()) if hasattr(os, "getuid") else "current-user"
+    return Path(tempfile.gettempdir()) / f"ecc-vsdd-guard-{user_id}"
+
+
+def ensure_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        deny(f"guard runtime path is not a private directory: {path}")
+    if os.name != "nt":
+        details = path.stat()
+        if hasattr(os, "getuid") and details.st_uid != os.getuid():
+            deny(f"guard runtime directory has a different owner: {path}")
+        if stat.S_IMODE(details.st_mode) & 0o077:
+            try:
+                path.chmod(0o700)
+            except OSError as error:
+                deny(f"cannot restrict guard runtime directory permissions: {error}")
+            if stat.S_IMODE(path.stat().st_mode) & 0o077:
+                deny(f"guard runtime directory permissions are too broad: {path}")
+
+
+def write_private_json(path: Path, record: dict) -> None:
+    root = guard_runtime_root()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        deny(f"guard runtime record escapes its private root: {path}")
+    ensure_private_directory(root)
+    ensure_private_directory(path.parent)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def safe_session_id(session_id: object) -> str:
+    return re.sub(r"[^a-zA-Z0-9-]", "", str(session_id or ""))
+
+
+def normalized_cwd(payload: dict) -> str | None:
+    raw = str(payload.get("cwd") or "")
+    if not raw or not Path(raw).is_absolute():
+        return None
+    return str(Path(raw).resolve())
+
+
+def authorization_record_path(session_id: object) -> Path | None:
+    safe_id = re.sub(r"[^a-zA-Z0-9-]", "", str(session_id or ""))
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "authorized-sessions" / f"{safe_id}.json"
+
+
+def authorize_strict_session(payload: dict) -> None:
+    path = authorization_record_path(payload.get("session_id"))
+    cwd = normalized_cwd(payload)
+    if path is None or cwd is None:
+        deny("cannot persist strict session authorization")
+    try:
+        write_private_json(
+            path,
+            {
+                "schema_version": 1,
+                "agent_type": "ecc-vsdd:vsdd-orchestrator",
+                "authorization": "vsdd-run-strict",
+                "session_id": safe_session_id(payload.get("session_id")),
+                "cwd": cwd,
+                "created_at": int(time.time()),
+            },
+        )
+    except OSError as error:
+        deny(f"cannot persist strict session authorization: {error}")
+
+
+def strict_session_authorized(payload: dict) -> bool:
+    if not payload.get("agent_id"):
+        return False
+    path = authorization_record_path(payload.get("session_id"))
+    if path is None or not path.is_file():
+        return False
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    created_at = record.get("created_at")
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    return (
+        record.get("schema_version") == 1
+        and record.get("agent_type") == "ecc-vsdd:vsdd-orchestrator"
+        and record.get("authorization") == "vsdd-run-strict"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and 0 <= age <= AUTHORIZATION_TTL_SECONDS
+    )
+
+
+def clear_session_state(payload: dict) -> None:
+    for resolver in (authorization_record_path, session_record_path):
+        path = resolver(payload.get("session_id"))
+        if path is None:
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            deny(f"cannot clear guard session state: {error}")
 
 
 def normalized_agent(agent_type: object) -> str:
@@ -84,11 +226,10 @@ def check_effort(
 
 
 def session_record_path(session_id: object) -> Path | None:
-    data_root = os.environ.get("CLAUDE_PLUGIN_DATA")
     safe_id = re.sub(r"[^a-zA-Z0-9-]", "", str(session_id or ""))
-    if not data_root or not safe_id:
+    if not safe_id:
         return None
-    return Path(data_root) / "session-models" / f"{safe_id}.json"
+    return guard_runtime_root() / "session-models" / f"{safe_id}.json"
 
 
 def record_session_model(payload: dict) -> None:
@@ -105,11 +246,7 @@ def record_session_model(payload: dict) -> None:
     if path is None:
         return
     model = str(raw_model).lower()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"agent_type": agent_type, "model": model}) + "\n",
-        encoding="utf-8",
-    )
+    write_private_json(path, {"agent_type": agent_type, "model": model})
     expected = EXPECTED_MODEL[agent_type]
     if not model or expected not in model:
         print(
@@ -271,9 +408,11 @@ def check_launcher(command: object) -> None:
 
 
 def main() -> None:
-    strict = sys.argv[1:] == ["--strict"]
-    session_start = sys.argv[1:] == ["--session-start"]
-    if sys.argv[1:] and not strict and not session_start:
+    arguments = sys.argv[1:]
+    strict = arguments == ["--strict"]
+    session_start = arguments == ["--session-start"]
+    session_end = arguments == ["--session-end"]
+    if arguments and not strict and not session_start and not session_end:
         deny("unsupported guard argument")
 
     try:
@@ -283,6 +422,9 @@ def main() -> None:
 
     if session_start:
         record_session_model(payload)
+        return
+    if session_end:
+        clear_session_state(payload)
         return
 
     agent_type = normalized_agent(payload.get("agent_type"))
@@ -303,6 +445,7 @@ def main() -> None:
             allow_unobservable=agent_type
             != "ecc-vsdd:vsdd-implementation-driver",
         )
+        allow_validated_tool(strict or strict_session_authorized(payload))
         return
 
     if agent_type not in EXPECTED_EFFORT and not strict:
@@ -322,6 +465,9 @@ def main() -> None:
         if tool_input.get("run_in_background") not in (None, False):
             deny("the VSDD worker launcher must run in the foreground until completion")
         check_launcher(tool_input.get("command"))
+        if strict:
+            authorize_strict_session(payload)
+        allow_validated_tool(strict)
         return
 
     if tool_name not in ORCHESTRATOR_TOOLS:
@@ -347,6 +493,10 @@ def main() -> None:
         if requested not in ORCHESTRATOR_AGENTS:
             deny(f"Fable cannot launch unpinned agent {requested!r}")
         check_pinned_agent_definition(requested)
+
+    if strict:
+        authorize_strict_session(payload)
+    allow_validated_tool(strict)
 
 
 if __name__ == "__main__":

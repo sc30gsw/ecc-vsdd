@@ -51,6 +51,12 @@ Claude Code内で`start`します。
 /ecc-vsdd:vsdd-run start "管理者がメールグループを名前と状態で絞り込める機能。URLへ条件を保持し、API失敗時は再試行できること" --until review
 ```
 
+Review完了後にPRまで延長する場合は、外部変更を改めて明示します。
+
+```text
+/ecc-vsdd:vsdd-run resume mail-groups-filter --until pr
+```
+
 briefから開始した場合、Haiku Init workerがkebab-case slugを決定します。Notion URL、既存source、または十分に詳細なbriefのいずれかが必要です。
 
 StartのHaiku処理は2段階です。最初は明示的な`operation: bootstrap`として同梱runtimeの`bootstrap` commandだけを実行し、`vsdd/<slug>` integration worktreeと、その中の`run-state.json`だけを作って終了します。この操作はPhase 0より前なのでSteeringを要求しません。Steering完了後は別invocationの`operation: phase`としてPhase 1 Initを行い、branch/worktree identity、`bootstrap_status: READY`、Init pending、追加artifactなしを機械検証してからskeletonを作ります。この正確なbootstrapは既存spec衝突として扱いません。
@@ -64,6 +70,8 @@ StartのHaiku処理は2段階です。最初は明示的な`operation: bootstrap
 | `--until review\|pr` | `review` | 独立reviewまで、またはpush/PR作成まで |
 
 `--until pr`は外部変更の明示的な許可です。失敗したgateを無視する許可ではありません。
+
+要求したReviewまたはPR境界では、成果物snapshotに加えてruntime terminal gateが`status: COMPLETE`と`reached`を保存します。ReviewからPRへ延長するときだけ、明示`--until pr`を`extend` gateが記録し、runをPhase 9へ再オープンします。
 
 ## 実行中の流れ
 

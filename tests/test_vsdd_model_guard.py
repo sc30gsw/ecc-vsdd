@@ -25,9 +25,10 @@ class ModelGuardTest(unittest.TestCase):
         env.update(
             {
                 "CLAUDE_PLUGIN_ROOT": str(ROOT),
-                "CLAUDE_PLUGIN_DATA": data_root,
+                "TMPDIR": data_root,
             }
         )
+        env.pop("CLAUDE_PLUGIN_DATA", None)
         env.pop("CLAUDE_CODE_SUBAGENT_MODEL", None)
         env.update(environment)
         return subprocess.run(
@@ -39,14 +40,43 @@ class ModelGuardTest(unittest.TestCase):
             env=env,
         )
 
+    def run_global_guard(
+        self, payload: dict, *, data_root: str
+    ) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "TMPDIR": data_root,
+            }
+        )
+        env.pop("CLAUDE_PLUGIN_DATA", None)
+        env.pop("CLAUDE_CODE_SUBAGENT_MODEL", None)
+        return subprocess.run(
+            ["python3", str(SCRIPT)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
     def orchestrator_launch(self) -> dict:
         return {
             "agent_type": "ecc-vsdd:vsdd-orchestrator",
             "session_id": "orchestrator-session",
+            "cwd": str(ROOT),
             "effort": {"level": "high"},
             "tool_name": "Agent",
             "tool_input": {"subagent_type": "ecc-vsdd:vsdd-code-reviewer"},
         }
+
+    def assert_strict_allow(self, result: subprocess.CompletedProcess[str]) -> None:
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        decision = output["hookSpecificOutput"]
+        self.assertEqual(decision["hookEventName"], "PreToolUse")
+        self.assertEqual(decision["permissionDecision"], "allow")
 
     def test_rejects_per_invocation_model_override(self) -> None:
         payload = self.orchestrator_launch()
@@ -82,13 +112,14 @@ class ModelGuardTest(unittest.TestCase):
             "agent_type": "ecc-vsdd:vsdd-code-reviewer",
             "agent_id": "subagent-1",
             "session_id": "shared-parent-session",
+            "cwd": str(ROOT),
             "effort": {"level": "xhigh"},
             "tool_name": "Read",
             "tool_input": {},
         }
         result = self.run_guard(payload, data_root=data_root)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_strict_allow(result)
 
     def test_session_start_without_optional_model_does_not_block_tools(self) -> None:
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-model-optional-")
@@ -135,7 +166,7 @@ class ModelGuardTest(unittest.TestCase):
 
         result = self.run_guard(payload)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_strict_allow(result)
 
     def test_main_agent_without_effort_is_rejected(self) -> None:
         payload = self.orchestrator_launch()
@@ -188,7 +219,143 @@ class ModelGuardTest(unittest.TestCase):
 
                 result = self.run_guard(payload)
 
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_strict_allow(result)
+
+    def test_strict_orchestrator_launch_auto_approves_after_validation(self) -> None:
+        self.assert_strict_allow(self.run_guard(self.orchestrator_launch()))
+
+    def test_strict_hook_works_without_plugin_data_environment(self) -> None:
+        runtime_root = tempfile.mkdtemp(prefix="ecc-vsdd-runtime-root-")
+        result = self.run_guard(
+            self.orchestrator_launch(), data_root=runtime_root
+        )
+
+        self.assert_strict_allow(result)
+        records = list(Path(runtime_root).rglob("orchestrator-session.json"))
+        self.assertEqual(len(records), 1)
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory modes are not portable")
+    def test_guard_runtime_root_and_record_directory_are_private(self) -> None:
+        runtime_root = tempfile.mkdtemp(prefix="ecc-vsdd-runtime-mode-")
+        result = self.run_guard(
+            self.orchestrator_launch(), data_root=runtime_root
+        )
+
+        self.assert_strict_allow(result)
+        record = next(Path(runtime_root).rglob("orchestrator-session.json"))
+        guard_root = record.parents[1]
+        self.assertEqual(guard_root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(record.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipIf(os.name == "nt", "POSIX directory modes are not portable")
+    def test_owned_legacy_runtime_root_is_migrated_to_private_mode(self) -> None:
+        runtime_root = tempfile.mkdtemp(prefix="ecc-vsdd-runtime-migration-")
+        guard_root = Path(runtime_root) / f"ecc-vsdd-guard-{os.getuid()}"
+        guard_root.mkdir(mode=0o755)
+        guard_root.chmod(0o755)
+
+        result = self.run_guard(
+            self.orchestrator_launch(), data_root=runtime_root
+        )
+
+        self.assert_strict_allow(result)
+        self.assertEqual(guard_root.stat().st_mode & 0o777, 0o700)
+
+    def test_hook_configs_do_not_require_plugin_data_in_skill_scope(self) -> None:
+        hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+        session_args = hooks["hooks"]["SessionStart"][0]["hooks"][0]["args"]
+        global_args = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["args"]
+        end_args = hooks["hooks"]["SessionEnd"][0]["hooks"][0]["args"]
+        self.assertEqual(session_args[-1], "--session-start")
+        self.assertEqual(len(global_args), 1)
+        self.assertEqual(end_args[-1], "--session-end")
+        self.assertNotIn("CLAUDE_PLUGIN_DATA", json.dumps(hooks))
+
+        skill = (ROOT / "skills" / "vsdd-run" / "SKILL.md").read_text()
+        self.assertNotIn("CLAUDE_PLUGIN_DATA", skill)
+        self.assertNotIn("--data-root", skill)
+
+    def test_non_strict_global_hook_does_not_auto_approve_worker_tools(self) -> None:
+        payload = {
+            "agent_type": "ecc-vsdd:vsdd-status-worker",
+            "agent_id": "subagent-1",
+            "session_id": "shared-parent-session",
+            "effort": {"level": "low"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 runtime.py preflight"},
+        }
+        result = self.run_global_guard(
+            payload,
+            data_root=tempfile.mkdtemp(prefix="ecc-vsdd-model-guard-global-"),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_strict_orchestrator_authorizes_pinned_worker_in_shared_session(self) -> None:
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-model-guard-authorized-")
+        orchestrator = self.orchestrator_launch()
+        orchestrator["session_id"] = "shared-authorized-session"
+        self.assert_strict_allow(
+            self.run_guard(orchestrator, data_root=data_root)
+        )
+        worker = {
+            "agent_type": "ecc-vsdd:vsdd-status-worker",
+            "agent_id": "subagent-1",
+            "session_id": "shared-authorized-session",
+            "cwd": str(ROOT),
+            "effort": {"level": "low"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "python3 runtime.py preflight"},
+        }
+
+        self.assert_strict_allow(
+            self.run_global_guard(worker, data_root=data_root)
+        )
+
+    def test_authorization_is_bound_to_the_orchestrator_cwd(self) -> None:
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-cwd-bound-")
+        orchestrator = self.orchestrator_launch()
+        orchestrator["session_id"] = "cwd-bound-session"
+        self.assert_strict_allow(
+            self.run_guard(orchestrator, data_root=data_root)
+        )
+        worker = {
+            "agent_type": "ecc-vsdd:vsdd-status-worker",
+            "agent_id": "subagent-1",
+            "session_id": "cwd-bound-session",
+            "cwd": str(ROOT.parent),
+            "effort": {"level": "low"},
+            "tool_name": "Read",
+            "tool_input": {},
+        }
+
+        result = self.run_global_guard(worker, data_root=data_root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_session_end_removes_authorization_and_model_records(self) -> None:
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-session-end-")
+        payload = self.orchestrator_launch()
+        payload["session_id"] = "ending-session"
+        payload["model"] = "claude-fable-5"
+        started = self.run_guard(
+            payload, "--session-start", data_root=data_root
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assert_strict_allow(self.run_guard(payload, data_root=data_root))
+        self.assertGreaterEqual(
+            len(list(Path(data_root).rglob("ending-session.json"))), 2
+        )
+
+        ended = self.run_guard(payload, "--session-end", data_root=data_root)
+
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertEqual(
+            list(Path(data_root).rglob("ending-session.json")), []
+        )
 
     def test_ultracode_main_session_uses_launcher_effort_not_frontmatter(self) -> None:
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-ultracode-record-")
@@ -212,7 +379,7 @@ class ModelGuardTest(unittest.TestCase):
         }
         result = self.run_guard(payload, data_root=data_root)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_strict_allow(result)
 
 
 if __name__ == "__main__":

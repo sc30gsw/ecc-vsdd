@@ -143,6 +143,9 @@ claude --agent ecc-vsdd:vsdd-orchestrator
 # 中断・失敗後
 /ecc-vsdd:vsdd-run resume mail-groups-filter
 
+# Review完了後、明示的にPRまで延長
+/ecc-vsdd:vsdd-run resume mail-groups-filter --until pr
+
 # 再開時に仕様ソースを追加・差し替える場合（Requirements以降を自動無効化）
 /ecc-vsdd:vsdd-run resume mail-groups-filter https://www.notion.so/yyyy
 
@@ -152,7 +155,7 @@ claude --agent ecc-vsdd:vsdd-orchestrator
 /ecc-vsdd:vsdd-run cleanup mail-groups-filter
 ```
 
-Fableは成果物・コード・テスト・レビュー・PR本文を書きません。SkillスコープのhookがFableのWrite/Edit、任意Bash、未固定agent起動、呼出し時のmodel overrideを拒否し、各工程を次のモデルへ強制ルーティングします。Claude Codeのsubagent hook payloadには実modelが含まれず、バージョンによっては実effortも省略されるため、guardは親Fableの値をsubagentへ誤適用しません。代わりに起動前override拒否と配布agent frontmatterを必ず検査し、payloadにeffortがある場合は実効値も照合します。独立main sessionは自身のpayloadに含まれるmodelを検証し、effortを必須検証します。
+Fableは成果物・コード・テスト・レビュー・PR本文を書きません。SkillスコープのhookがFableのWrite/Edit、任意Bash、未固定agent起動、呼出し時のmodel overrideを拒否し、各工程を次のモデルへ強制ルーティングします。`vsdd-run`のstrict hookは検証済みorchestratorのsession IDとcwdを、ユーザー専用OS runtime directory（directory `0700`、record `0600`、7日TTL）へ記録します。同じsession ID・cwd・subagent IDを持ち、agent定義・model・effortの検証を通過したpinned workerだけにglobal hookがClaude Codeの`permissionDecision: allow`を返し、`SessionEnd`でrecordを削除します。Skill hookでは利用できない`${CLAUDE_PLUGIN_DATA}`に依存しないため、plugin agentへ同梱できない`permissionMode`やproject permission設定なしで無人実行できます。直接起動worker・別session・別cwd・strict認可前のglobal hookは自動承認されません。Claude Codeのsubagent hook payloadには実modelが含まれず、バージョンによっては実effortも省略されるため、guardは親Fableの値をsubagentへ誤適用しません。代わりに起動前override拒否と配布agent frontmatterを必ず検査し、payloadにeffortがある場合は実効値も照合します。独立main sessionは自身のpayloadに含まれるmodelを検証し、effortを必須検証します。
 
 | 工程 | モデル | effort |
 | --- | --- | --- |
@@ -183,6 +186,8 @@ Startは`operation: bootstrap`を明示し、同梱runtimeの専用`bootstrap` c
 Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存もisolated childへ明示的に引き継いでからClaudeを起動します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。専用sessionとWorkflow agentは無人実行用の読取tool権限を持ち、`.claude/specs`はRead/Glob/Grepで参照し、background Workflowの完了通知と成果物検証が終わるまで最終結果を返しません。各stageは現在の`workflow_run_id`を返し、plan/revise-planでは新しい内容と同じrun IDを本文へ保存するため、既存planを読んだだけのstale COMPLETEや古いrun IDの流用はlauncherが拒否します。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記し、完了TASKを`progress.md`の`done`へ同期します。実装・修正stageの最終`COMPLETE`は、launcherが同梱runtimeの`task-gate`を実行し、TASK集合、`done`状態、attempt PASS、Markdown形式のSHA mapping、commit存在性とintegration `HEAD`到達性のすべてが`READY`になった場合だけ受理します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
 
 Phase 9はworkerの完了メッセージだけでは完了しません。GitHub URL/number、base branch/SHA、head branch/SHA、target commitを`pr-result.json`へ保存し、current integration `HEAD`と一致するruntime snapshotが成功した場合だけPR phaseを完了にします。
+
+ReviewまたはPRの証拠が揃った後も、同梱runtimeの`complete --reached review|pr`が成功するまでtop-level runは完了しません。このterminal gateが`status: COMPLETE`、`reached`、terminal `current_phase`、`completed_at`を原子的に保存します。Review完了後にPRまで進める場合は、ユーザーが明示した`resume <slug> --until pr`だけを受け付け、`extend --until pr`で外部操作境界を記録してから再開します。
 
 ### Publication-ready判定
 

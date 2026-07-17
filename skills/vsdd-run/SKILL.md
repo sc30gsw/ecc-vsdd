@@ -1,8 +1,8 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 0.2.6
-argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] | status|cancel|cleanup <slug>
+version: 0.3.5
+argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
   PreToolUse:
@@ -21,7 +21,7 @@ hooks:
 
 ```text
 /ecc-vsdd:vsdd-run start <request-or-slug> [source] [--mode auto|standard] [--base <ref>] [--until review|pr]
-/ecc-vsdd:vsdd-run resume <slug> [source]
+/ecc-vsdd:vsdd-run resume <slug> [source] [--until pr]
 /ecc-vsdd:vsdd-run status <slug>
 /ecc-vsdd:vsdd-run cancel <slug>
 /ecc-vsdd:vsdd-run cleanup <slug>
@@ -73,6 +73,8 @@ Require Claude Code 2.1.203 or later, every named plugin agent, the exact pinned
 ### Resume
 
 When a source argument is supplied, first delegate source-update mode to a fresh Init worker. Require successful persistence, invalidate Requirements and downstream phases, and snapshot the new source as specified by the runtime contract. Never recreate or overwrite the existing spec skeleton.
+
+When and only when the user explicitly supplies `--until pr` for a run already completed at `review`, have a fresh Status worker run deterministic `extend --until pr` before PR preflight. This records the new external-action boundary and reopens the run. Never infer this authorization from an earlier default, a status request, or the existence of review evidence.
 
 Delegate state verification to a fresh `ecc-vsdd:vsdd-status-worker`. Run the deterministic runtime preflight, invalidate the earliest stale phase and all downstream phases, then continue at the first incomplete valid phase. Preserve retry counters unless their owning phase was invalidated by changed upstream input.
 
@@ -167,6 +169,8 @@ Never create a PR with unresolved CRITICAL/HIGH. If MEDIUM or a manual follow-up
 
 After `gh pr create`, require the PR worker to persist `pr-result.json` with URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit. The Status worker must snapshot phase `pr`; without this current structured evidence the run is not complete.
 
+After both current Code and Security reviews are snapshotted `PASS`, have the Status worker run deterministic `complete --reached review` when `until: review`. After a current PR snapshot, run `complete --reached pr` when `until: pr`. Do not print `VSDD RUN COMPLETE` until this terminal command returns `status: COMPLETE`; it atomically sets the top-level status, reached boundary, current phase, and completion timestamp.
+
 ## Unattended decision boundary
 
 Allow workers to document and proceed with reversible technical assumptions. Block instead of guessing when an unresolved choice affects product behavior, data loss, security, compatibility, destructive operations, or external authority.
@@ -198,4 +202,4 @@ Preserved state: <run-state path and worktree>
 Resume: /ecc-vsdd:vsdd-run resume <slug>
 ```
 
-Never claim completion unless the target phase's persisted gate is valid for the current hashes and commit.
+Never claim completion unless the target phase's persisted gate is valid for the current hashes and commit and top-level `status` is `COMPLETE` with the requested `reached` boundary.

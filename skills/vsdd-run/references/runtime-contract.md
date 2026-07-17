@@ -43,6 +43,21 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" preflight \
 
 Preflight also requires every direct prerequisite phase to be `COMPLETE`. Review prerequisites require a deterministic artifact snapshot with `verdict: PASS`; code and security review snapshots must target the current integration `HEAD`, carry the same `review_attempt`, and match the current finished `post-implementation-review` ledger entry. PR preflight requires Requirements, Plan, Implementation Workflow, Code, and Security reviews all to remain PASS and current. A new commit after review therefore returns `BLOCKED` until fresh Opus reviews are snapshotted.
 
+After the requested terminal evidence is current, close the run deterministically:
+
+```text
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" complete \
+  --worktree <absolute-integration-worktree> --slug <slug> \
+  --reached <review|pr>
+```
+
+To continue a review-complete run to PR, require an explicit user `--until pr` and record it before PR preflight:
+
+```text
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" extend \
+  --worktree <absolute-integration-worktree> --slug <slug> --until pr
+```
+
 After a phase artifact passes its completion gate:
 
 ```text

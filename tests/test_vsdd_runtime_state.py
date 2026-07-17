@@ -138,6 +138,34 @@ class RuntimeStateTest(unittest.TestCase):
         if scope not in state.get("attempt_ledger", {}):
             runtime.begin_attempt(root, "sample", scope)
 
+    def prepare_review_complete_run(self) -> tuple[Path, Path, str]:
+        root, spec = self.make_spec()
+        git(root, "branch", "-m", "vsdd/sample")
+        self.write_run_state(root, spec)
+        self.write_complete_steering(root)
+        head = self.write_completed_implementation(root, spec)
+        state = runtime.read_state(root, "sample")
+        state["until"] = "review"
+        state["phases"] = {"implementation": {"status": "COMPLETE"}}
+        (spec / "run-state.json").write_text(json.dumps(state), encoding="utf-8")
+        review_specs = (
+            ("requirements-review", "requirement-review.md", "requirements", "N/A"),
+            ("plan-review", "plan-review.md", "plan", "N/A"),
+            (
+                "implementation-plan-review",
+                "implementation-workflow-review.md",
+                "implementation-workflow",
+                "N/A",
+            ),
+            ("code-review", "code-review.md", "code", head),
+            ("security-review", "security-review.md", "security", head),
+        )
+        for phase, filename, review_type, target in review_specs:
+            self.write_review(spec, filename, review_type, target)
+            self.begin_review_attempt(root, phase)
+            runtime.snapshot_phase(root, "sample", phase)
+        return root, spec, head
+
     def test_detect_base_uses_origin_head(self) -> None:
         repo = self.make_repo("develop")
         head = git(repo, "rev-parse", "HEAD")
@@ -883,6 +911,165 @@ class RuntimeStateTest(unittest.TestCase):
             runtime.RuntimeBlocked, "remediation requires at least one REVISE"
         ):
             runtime.preflight(root, "sample", "remediation")
+
+    def test_review_completion_is_persisted_and_idempotent(self) -> None:
+        root, _, _ = self.prepare_review_complete_run()
+
+        completed = runtime.complete_run(root, "sample", "review")
+        repeated = runtime.complete_run(root, "sample", "review")
+        state = runtime.read_state(root, "sample")
+
+        self.assertEqual(completed["status"], "COMPLETE")
+        self.assertFalse(completed["idempotent"])
+        self.assertTrue(repeated["idempotent"])
+        self.assertEqual(state["status"], "COMPLETE")
+        self.assertEqual(state["reached"], "review")
+        self.assertEqual(state["current_phase"], "security-review")
+        self.assertIn("completed_at", state)
+
+    def test_review_completion_rejects_drift_detected_by_preflight(self) -> None:
+        root, spec, _ = self.prepare_review_complete_run()
+        report = spec / "review-results" / "security-review.md"
+        report.write_text(
+            report.read_text(encoding="utf-8") + "\npost-snapshot drift\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            runtime.RuntimeBlocked, "completion preflight invalidated security-review"
+        ):
+            runtime.complete_run(root, "sample", "review")
+
+        state = runtime.read_state(root, "sample")
+        self.assertEqual(state["status"], "RUNNING")
+        self.assertEqual(state["current_phase"], "security-review")
+        self.assertEqual(state["phases"]["security-review"]["status"], "PENDING")
+        self.assertNotIn("reached", state)
+        self.assertNotIn("completed_at", state)
+
+    def test_idempotent_completion_reaudits_terminal_artifacts(self) -> None:
+        root, spec, _ = self.prepare_review_complete_run()
+        runtime.complete_run(root, "sample", "review")
+        report = spec / "review-results" / "security-review.md"
+        report.write_text(
+            report.read_text(encoding="utf-8") + "\npost-completion drift\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            runtime.RuntimeBlocked, "run artifacts changed"
+        ):
+            runtime.complete_run(root, "sample", "review")
+
+        state = runtime.read_state(root, "sample")
+        self.assertEqual(state["status"], "RUNNING")
+        self.assertEqual(state["current_phase"], "security-review")
+        self.assertNotIn("reached", state)
+        self.assertNotIn("completed_at", state)
+
+    def test_idempotent_completion_invalidates_reviews_for_a_new_head(self) -> None:
+        root, _, _ = self.prepare_review_complete_run()
+        runtime.complete_run(root, "sample", "review")
+        (root / "after-review.txt").write_text("new head\n", encoding="utf-8")
+        git(root, "add", "after-review.txt")
+        git(
+            root,
+            "-c",
+            "user.name=VSDD Test",
+            "-c",
+            "user.email=vsdd@example.invalid",
+            "commit",
+            "-m",
+            "change after review",
+        )
+
+        with self.assertRaisesRegex(
+            runtime.RuntimeBlocked, "terminal completion evidence invalidated code-review"
+        ):
+            runtime.complete_run(root, "sample", "review")
+
+        state = runtime.read_state(root, "sample")
+        self.assertEqual(state["status"], "RUNNING")
+        self.assertEqual(state["current_phase"], "code-review")
+        self.assertEqual(state["phases"]["code-review"]["status"], "PENDING")
+        self.assertEqual(state["phases"]["security-review"]["status"], "PENDING")
+        self.assertNotIn("reached", state)
+        self.assertNotIn("completed_at", state)
+
+    def test_explicit_pr_extension_reopens_a_review_complete_run(self) -> None:
+        root, _, _ = self.prepare_review_complete_run()
+        runtime.complete_run(root, "sample", "review")
+
+        extended = runtime.extend_run(root, "sample", "pr")
+        state = runtime.read_state(root, "sample")
+
+        self.assertEqual(extended["status"], "RUNNING")
+        self.assertEqual(state["until"], "pr")
+        self.assertEqual(state["current_phase"], "pr")
+        self.assertNotIn("reached", state)
+        self.assertIn("review_completed_at", state)
+        self.assertEqual(
+            runtime.preflight(root, "sample", "pr"),
+            {"status": "READY", "phase": "pr"},
+        )
+
+    def test_pr_extension_invalidates_reviews_for_a_new_head(self) -> None:
+        root, _, _ = self.prepare_review_complete_run()
+        runtime.complete_run(root, "sample", "review")
+        (root / "after-review.txt").write_text("new head\n", encoding="utf-8")
+        git(root, "add", "after-review.txt")
+        git(
+            root,
+            "-c",
+            "user.name=VSDD Test",
+            "-c",
+            "user.email=vsdd@example.invalid",
+            "commit",
+            "-m",
+            "change before extension",
+        )
+
+        with self.assertRaisesRegex(
+            runtime.RuntimeBlocked, "review extension evidence invalidated code-review"
+        ):
+            runtime.extend_run(root, "sample", "pr")
+
+        state = runtime.read_state(root, "sample")
+        self.assertEqual(state["status"], "RUNNING")
+        self.assertEqual(state["until"], "review")
+        self.assertEqual(state["current_phase"], "code-review")
+        self.assertEqual(state["phases"]["code-review"]["status"], "PENDING")
+        self.assertEqual(state["phases"]["security-review"]["status"], "PENDING")
+        self.assertNotIn("reached", state)
+        self.assertNotIn("completed_at", state)
+
+    def test_pr_completion_requires_and_accepts_snapshotted_pr_evidence(self) -> None:
+        root, spec, head = self.prepare_review_complete_run()
+        runtime.complete_run(root, "sample", "review")
+        runtime.extend_run(root, "sample", "pr")
+
+        with self.assertRaisesRegex(runtime.RuntimeBlocked, "pr-result.json"):
+            runtime.complete_run(root, "sample", "pr")
+
+        state = runtime.read_state(root, "sample")
+        evidence = {
+            "url": "https://github.com/sc30gsw/example/pull/42",
+            "number": 42,
+            "base_branch": state["base_branch"],
+            "base_sha": state["base_sha"],
+            "head_branch": "vsdd/sample",
+            "head_sha": head,
+            "target_commit": head,
+        }
+        (spec / "pr-result.json").write_text(json.dumps(evidence), encoding="utf-8")
+        runtime.snapshot_phase(root, "sample", "pr")
+
+        completed = runtime.complete_run(root, "sample", "pr")
+        state = runtime.read_state(root, "sample")
+
+        self.assertEqual(completed["status"], "COMPLETE")
+        self.assertEqual(state["reached"], "pr")
+        self.assertEqual(state["current_phase"], "pr")
 
     def test_pr_preflight_rejects_mixed_post_review_attempts(self) -> None:
         root, spec = self.make_spec()
