@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.1
+version: 1.0.0-rc.2
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -35,10 +35,10 @@ Default a new run to `--mode auto`. Preserve the recorded mode on resume. Mode c
 
 ## Control-plane preflight
 
-Require the current session to run the plugin agent `ecc-vsdd:vsdd-orchestrator`. Its definition pins Fable at `high`. If it is not active, stop before tools or mutations and print:
+Require the current session to run the plugin agent `ecc-vsdd:vsdd-orchestrator` with explicit CLI effort `high`. The agent definition pins Fable, but Claude Code can retain the caller's default effort for a top-level `--agent` session, so never omit `--effort high`. If the required agent or effort is not active, stop before tools or mutations and print:
 
 ```text
-claude --agent ecc-vsdd:vsdd-orchestrator
+claude --agent ecc-vsdd:vsdd-orchestrator --effort high
 ```
 
 The scoped hook mechanically prevents Fable from writing files, running arbitrary Bash, or launching unpinned agents. Never weaken or work around it.

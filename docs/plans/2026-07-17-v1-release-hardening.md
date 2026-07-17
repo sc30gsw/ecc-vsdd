@@ -202,7 +202,7 @@ Run unit/integration tests and coverage on Linux and macOS, compile Python, vali
 
 **Step 2: Add release metadata**
 
-- Set the candidate version consistently to `1.0.0-rc.1`.
+- Set the candidate version consistently to the current release candidate (`1.0.0-rc.2` after the RC1 E2E startup fix).
 - Add `$schema`, `displayName`, `repository`, and the selected `license` field to the manifest.
 - Document macOS/Linux as supported and Windows as unsupported until its private-record guarantees are implemented and tested.
 - Record all 0.3.x hardening work in `CHANGELOG.md`.
@@ -244,4 +244,4 @@ Prove a resume/status prompt without `--until pr` cannot launch the broker or pe
 
 **Step 6: Audit every v1.0.0 requirement**
 
-Promote `v1.0.0-rc.1` to `v1.0.0` only when the same commit and installed payload have passed all gates.
+Promote `v1.0.0-rc.2` to `v1.0.0` only when the same commit and installed payload have passed all gates.

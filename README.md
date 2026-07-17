@@ -135,7 +135,7 @@ Fableを制御専用agentとして起動し、`start`を1回実行します。St
 
 ```bash
 # プラグイン導入後、Fable highの制御専用セッションを起動
-claude --agent ecc-vsdd:vsdd-orchestrator
+claude --agent ecc-vsdd:vsdd-orchestrator --effort high
 
 # Claude Code内: 要件ソースからPRまで自動実行
 /ecc-vsdd:vsdd-run start mail-groups-filter https://www.notion.so/xxxx --mode auto --until pr

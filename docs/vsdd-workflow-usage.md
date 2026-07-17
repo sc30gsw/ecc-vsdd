@@ -27,7 +27,7 @@ plugin manifestの`dependencies: ["ecc"]`により、marketplaceの明示的なH
 ローカルcheckoutを直接検証する場合は次のように起動できます。
 
 ```bash
-claude --plugin-dir /absolute/path/to/ecc-vsdd --agent ecc-vsdd:vsdd-orchestrator
+claude --plugin-dir /absolute/path/to/ecc-vsdd --agent ecc-vsdd:vsdd-orchestrator --effort high
 ```
 
 インストール済みpluginでは`--plugin-dir`は不要です。
@@ -37,7 +37,7 @@ claude --plugin-dir /absolute/path/to/ecc-vsdd --agent ecc-vsdd:vsdd-orchestrato
 Fable制御専用セッションを起動します。
 
 ```bash
-claude --agent ecc-vsdd:vsdd-orchestrator
+claude --agent ecc-vsdd:vsdd-orchestrator --effort high
 ```
 
 Claude Code内で`start`します。

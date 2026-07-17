@@ -2,7 +2,7 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
-## [1.0.0-rc.1] - 2026-07-17
+## [1.0.0-rc.2] - 2026-07-17
 
 ### Added
 
@@ -29,6 +29,7 @@
 - resume時に追加したNotion sourceを無視する問題。
 - `tasks.md`と`progress.md`のTASK欠落を完了扱いする問題。
 - stale review attempt、別commitのreview、未統合TASK commit、偽のPR完了メッセージを受理する問題。
+- top-level Fable sessionがCLI既定の`medium` effortで起動し、control-plane preflightで停止する問題。起動例と契約で`--effort high`を必須化。
 
 ### Security
 

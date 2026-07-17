@@ -180,6 +180,27 @@ class ModelGuardTest(unittest.TestCase):
         self.assertEqual(decision["hookEventName"], "PreToolUse")
         self.assertEqual(decision["permissionDecision"], "allow")
 
+    def test_orchestrator_cli_examples_require_explicit_high_effort(self) -> None:
+        expected = "claude --agent ecc-vsdd:vsdd-orchestrator --effort high"
+        for relative_path in (
+            "README.md",
+            "docs/vsdd-workflow-usage.md",
+            "skills/vsdd-run/SKILL.md",
+        ):
+            with self.subTest(path=relative_path):
+                command_lines = [
+                    line
+                    for line in (ROOT / relative_path)
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                    if line.startswith("claude ")
+                    and "--agent ecc-vsdd:vsdd-orchestrator" in line
+                ]
+                self.assertTrue(command_lines)
+                self.assertIn(expected, command_lines)
+                for command in command_lines:
+                    self.assertIn("--effort high", command)
+
     def test_rejects_per_invocation_model_override(self) -> None:
         payload = self.orchestrator_launch()
         payload["tool_input"]["model"] = "sonnet"
