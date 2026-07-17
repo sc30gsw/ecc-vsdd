@@ -1,6 +1,20 @@
 {
   "description": "Enforce pinned agent model/effort, reject subagent model overrides, and keep Fable in the control plane",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py",
+              "--user-prompt-submit"
+            ]
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -24,6 +38,21 @@
             "command": "python3",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py"
+            ]
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "ecc-vsdd:vsdd-pr-worker",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py",
+              "--subagent-start"
             ]
           }
         ]

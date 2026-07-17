@@ -58,7 +58,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" extend \
   --worktree <absolute-integration-worktree> --slug <slug> --until pr
 ```
 
-The strict control-plane hook independently parses the PR worker's `VSDD_RUN_CONTEXT`, runs `preflight --phase pr`, and stores a private session-bound PR authorization before allowing that agent launch. The global hook revalidates the same authorization and preflight immediately before every PR-worker Bash command. The runtime requires top-level `until: pr` plus current review, commit, steering, and TASK evidence. Missing consent or stale evidence must prevent the external worker from starting or performing push/PR commands.
+The global `UserPromptSubmit` hook first records consent only for the exact current one-line `/ecc-vsdd:vsdd-run start|resume ... --until pr` (or `/vsdd-run`) prompt, bound to session ID, canonical cwd, and prompt ID. Every later prompt clears it. The strict control-plane hook consumes that consent by launch tool-use ID, independently parses the PR worker's `VSDD_RUN_CONTEXT`, runs `preflight --phase pr`, and stores a private launch authorization. `SubagentStart` binds a random capability to the actual PR worker agent ID. The global hook revalidates that session/cwd/prompt/agent/capability binding and preflight immediately before every PR-worker Bash command. The runtime requires top-level `until: pr` plus current review, commit, steering, and TASK evidence. Missing consent, replay by another worker, or stale evidence must prevent the external worker from starting or performing push/PR commands.
+
+For guard-observable direct commands and common shell/interpreter wrappers, all workers are denied `git push`, `git send-pack`, `gh pr` mutations, mutation-capable `gh api`, and recognized GitHub HTTP mutations. Dynamic shell subcommands and unclassified Git/gh commands fail closed. The PR worker creates only `pr-body.md` and invokes the exact bundled `vsdd-pr-action.py publish` broker with the injected literal capability/session/agent values. The broker revalidates authorization and preflight, verifies the unchanged remote base, pushes the exact integration ref, rechecks preflight, creates or reuses the PR through argument-array subprocess calls, validates GitHub base/head/draft identity, and atomically writes `pr-result.json`.
 
 After a phase artifact passes its completion gate:
 
@@ -140,4 +142,4 @@ After that TASK attempt, run `finish-attempt` with the returned `--attempt` and 
 
 ## PR completion evidence
 
-The PR worker must write `.claude/specs/<slug>/pr-result.json` with `url`, positive integer `number`, `base_branch`, `base_sha`, `head_branch`, `head_sha`, and `target_commit`. Snapshot phase `pr` only after writing it. The runtime requires the recorded base identity, `head_branch: vsdd/<slug>`, and both head fields equal to the current integration `HEAD`.
+The PR action broker must write `.claude/specs/<slug>/pr-result.json` with `url`, positive integer `number`, `draft`, `base_branch`, `base_sha`, `head_branch`, `head_sha`, `target_commit`, and `created_at`. Snapshot phase `pr` only after the broker writes it. The runtime requires the recorded base identity, `head_branch: vsdd/<slug>`, and both head fields equal to the current integration `HEAD`.

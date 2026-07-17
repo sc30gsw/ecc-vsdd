@@ -5,17 +5,17 @@ description: This skill should be used to generate, push, and create a VSDD pull
 
 # vsdd-pr — Create the gated VSDD pull request
 
-## Invocation
+## Invocation boundary
 
 ```text
-/vsdd-pr <slug>
+/ecc-vsdd:vsdd-run resume <slug> --until pr
 ```
 
-Standalone invocation is explicit authorization to push and create the PR. In a full run, require the original `--until pr` authorization.
+This phase is published only from a managed `vsdd-run` whose current, exact user prompt contains `--until pr`. A standalone Skill invocation, an earlier prompt, prose that mentions the command, or a persisted `until: pr` value is not current external-action authorization.
 
 ## Mandatory execution routing
 
-Delegate PR body generation, push, creation, and revision to a fresh `ecc-vsdd:vsdd-pr-worker` (Sonnet, `medium`). When already running as that agent, execute the steps below inline and do not delegate again. Never let Fable or a reviewer author PR text.
+Delegate PR body generation and broker invocation to a fresh `ecc-vsdd:vsdd-pr-worker` (Sonnet, `medium`). When already running as that agent, execute the steps below inline and do not delegate again. Never let Fable or a reviewer author PR text or perform an external mutation.
 
 ## Prerequisites
 
@@ -55,11 +55,31 @@ Derive every claim from disk and Git. Do not fabricate commands, results, commit
 - Create a draft PR when both reviews pass but a MEDIUM finding or manual follow-up remains.
 - Do not create any PR when CRITICAL/HIGH remains.
 
-## Create and persist
+## Publish through the broker
 
-Push `vsdd/<slug>` to the configured remote and use `gh pr create --base <run-state.base_branch>`. Require that the ref and SHA still match the recorded base; never assume `main` or redetect a different base at PR time. Use `--draft` only when required by the adaptive rule above.
+Write the complete body to the absolute path `.claude/specs/<slug>/pr-body.md`. Do not push, call `gh pr create`, call `gh api`, or write `pr-result.json` directly. Read the one-time values injected into this worker's `SubagentStart` context:
 
-Persist human-readable status in `progress.md`. Persist the completion authority in `.claude/specs/<slug>/pr-result.json` with exactly these current fields:
+- `VSDD_PR_ACTION_CAPABILITY`
+- `VSDD_PR_ACTION_SESSION_ID`
+- `VSDD_PR_ACTION_AGENT_ID`
+
+Invoke only this foreground command, substituting literal values from that context and the current run. Do not use environment-variable expansion for the injected values:
+
+```text
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-pr-action.py" publish \
+  --worktree "<absolute-integration-worktree>" \
+  --slug "<slug>" \
+  --session-id "<injected-session-id>" \
+  --agent-id "<injected-agent-id>" \
+  --capability "<injected-capability>" \
+  --title "<one-line-title>" \
+  --body-file "<absolute-spec-path>/pr-body.md" \
+  [--draft]
+```
+
+The broker revalidates the private authorization, current PR preflight, recorded base branch/SHA, exact integration branch/HEAD, and remote base. It pushes only the exact integration ref, rechecks preflight, creates or reuses the PR, validates GitHub's base/head identity and draft state, and atomically persists the completion authority below. Never assume `main` or redetect a different base at PR time.
+
+The broker persists `.claude/specs/<slug>/pr-result.json` with exactly these current fields:
 
 ```json
 {
@@ -75,7 +95,7 @@ Persist human-readable status in `progress.md`. Persist the completion authority
 }
 ```
 
-Then have the Status worker run `vsdd-runtime-state.py snapshot --phase pr`. The snapshot validates the GitHub URL/number, recorded base identity, exact integration branch, and both head fields against current `HEAD` before copying evidence into `run-state.json`. A PR worker message, `progress.md` row, or stale URL never completes the phase. If push, authentication, remote detection, `gh`, evidence persistence, or snapshot fails, return `VSDD RUN BLOCKED` and never fabricate a URL.
+Return the broker's structured result to Fable. Then have the Status worker run `vsdd-runtime-state.py snapshot --phase pr`. The snapshot validates the GitHub URL/number, recorded base identity, exact integration branch, and both head fields against current `HEAD` before copying evidence into `run-state.json`. A PR worker message, `progress.md` row, or stale URL never completes the phase. If authorization, preflight, push, authentication, remote detection, `gh`, evidence persistence, or snapshot fails, return `VSDD RUN BLOCKED` and never fabricate a URL or bypass the broker.
 
 ## Completion output
 

@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 0.3.7
+version: 1.0.0-rc.1
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -29,7 +29,7 @@ hooks:
 
 Treat the legacy `/ecc-vsdd:vsdd-run <slug> ...` form as `start <slug> ...`. Accept deprecated `--approval none` as a no-op; reject `critical` and `all` because independent automated reviews are mandatory gates.
 
-Default to `--until review`. Treat explicit `--until pr` as authorization to push the integration branch and create a PR. It never authorizes bypassing a failed gate.
+Default to `--until review`. Treat only an exact, current one-line `start|resume ... --until pr` user prompt as authorization to push the integration branch and create a PR. The hook binds it to the current session, canonical cwd, and prompt ID; the next user prompt clears it. It never authorizes bypassing a failed gate.
 
 Default a new run to `--mode auto`. Preserve the recorded mode on resume. Mode changes presentation and interaction style only; it never changes model routing, review coverage, severity gates, or retry limits.
 
@@ -165,9 +165,9 @@ Launch code and security reviews independently, preferably concurrently, against
 
 Use a fresh `vsdd-remediation-worker` at Sonnet `high` for the first ordinary fix. Use the ultracode launcher with stage `remediate` immediately when either report says `remediation_mode: workflow`, or for the second remediation round when blocking findings remain. After every fix, launch two new Opus reviewers. Allow the initial review and at most two remediation/re-review rounds; then block.
 
-Never create a PR with unresolved CRITICAL/HIGH. If MEDIUM or a manual follow-up remains, have the PR worker create a draft PR; otherwise create a ready PR. Launch it only with the exact Phase 9 `VSDD_RUN_CONTEXT`; the strict hook must parse that envelope and receive `READY` from runtime PR preflight before the Agent call is allowed. Its session-bound authorization and current preflight must also remain valid before every PR-worker Bash command.
+Never create a PR with unresolved CRITICAL/HIGH. If MEDIUM or a manual follow-up remains, have the PR worker request a draft PR; otherwise request a ready PR. Launch it only with the exact Phase 9 `VSDD_RUN_CONTEXT`; the strict hook must consume the current prompt-bound consent, parse that envelope, and receive `READY` from runtime PR preflight before the Agent call is allowed. `SubagentStart` binds a random capability to the actual PR worker agent ID. Its session-bound authorization and current preflight must remain valid before every PR-worker Bash command.
 
-After `gh pr create`, require the PR worker to persist `pr-result.json` with URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit. The Status worker must snapshot phase `pr`; without this current structured evidence the run is not complete.
+Every worker, including the PR worker, is forbidden from direct `git push`, `git send-pack`, and GitHub mutation commands. Require the PR worker to write only `pr-body.md` and invoke the bundled capability-gated `vsdd-pr-action.py publish` broker. The broker alone may push the exact integration ref, create or reuse the PR, validate remote/GitHub identity, and persist `pr-result.json` with URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit. The Status worker must snapshot phase `pr`; without this current structured evidence the run is not complete.
 
 After both current Code and Security reviews are snapshotted `PASS`, have the Status worker run deterministic `complete --reached review` when `until: review`. After a current PR snapshot, run `complete --reached pr` when `until: pr`. Do not print `VSDD RUN COMPLETE` until this terminal command returns `status: COMPLETE`; it atomically sets the top-level status, reached boundary, current phase, and completion timestamp.
 

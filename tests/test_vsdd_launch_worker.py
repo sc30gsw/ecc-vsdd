@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +37,12 @@ def git(repo: Path, *args: str) -> str:
 
 
 class LaunchWorkerTest(unittest.TestCase):
+    def assert_blocked(self, operation) -> str:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            operation()
+        return output.getvalue()
+
     def make_repo(self) -> tuple[Path, Path]:
         root = Path(tempfile.mkdtemp(prefix="ecc-vsdd-launch-test-"))
         git(root.parent, "init", "-b", "vsdd/sample", str(root))
@@ -172,7 +182,7 @@ class LaunchWorkerTest(unittest.TestCase):
 
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 str(SCRIPT),
                 "plan",
                 "--slug",
@@ -234,6 +244,279 @@ class LaunchWorkerTest(unittest.TestCase):
         )
 
         self.assertIn("implementation-plan-review must be REVISE", issues)
+
+    def test_io_process_and_terminal_helpers_fail_closed(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="ecc-vsdd-launch-helpers-"))
+        invalid = root / "invalid.json"
+        invalid.write_text("{", encoding="utf-8")
+        self.assertIn("cannot read", self.assert_blocked(lambda: launcher.read_json(invalid)))
+
+        with mock.patch.object(launcher.os, "replace", side_effect=OSError("denied")):
+            self.assertIn(
+                "cannot persist",
+                self.assert_blocked(
+                    lambda: launcher.write_json_atomic(root / "record.json", {})
+                ),
+            )
+
+        self.assertFalse(launcher.process_alive(0))
+        self.assertFalse(launcher.process_alive("not-a-pid"))
+        with mock.patch.object(launcher.os, "kill", side_effect=PermissionError):
+            self.assertTrue(launcher.process_alive(123))
+
+        terminal = launcher.parse_terminal_json(
+            "noise\n{\"status\": \"COMPLETE\", \"value\": 1}\n", ""
+        )
+        self.assertEqual(terminal["value"], 1)
+        fallback = launcher.parse_terminal_json("noise\n", "failure")
+        self.assertEqual(fallback["status"], "BLOCKED")
+        self.assertEqual(fallback["raw_stderr"], "failure")
+
+    def test_supervisor_helpers_reject_stale_and_ambiguous_state(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-supervisors-"))
+        stale = directory / "plan-stale.json"
+        stale.write_text(
+            json.dumps({"status": "RUNNING", "pid": 999999}), encoding="utf-8"
+        )
+        with mock.patch.object(launcher, "process_alive", return_value=False):
+            self.assertIsNone(launcher.running_supervisor(directory, "plan"))
+        self.assertEqual(launcher.read_json(stale)["status"], "BLOCKED")
+
+        for name in ("plan-one.json", "plan-two.json"):
+            (directory / name).write_text(
+                json.dumps({"status": "RUNNING", "pid": 1}), encoding="utf-8"
+            )
+        with mock.patch.object(launcher, "process_alive", return_value=True):
+            output = self.assert_blocked(
+                lambda: launcher.running_supervisor(directory, "plan")
+            )
+        self.assertIn("multiple live detached supervisors", output)
+
+    def test_wait_helper_validates_and_reports_every_terminal_shape(self) -> None:
+        worktree = Path(tempfile.mkdtemp(prefix="ecc-vsdd-wait-helper-")).resolve()
+        supervisors = worktree / ".claude/specs/sample/worker-supervisors"
+        supervisors.mkdir(parents=True)
+        evidence = supervisors / "plan-run.json"
+
+        self.assertIn(
+            "must be under",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    worktree / "outside.json", worktree, "sample", 0
+                )
+            ),
+        )
+        self.assertIn(
+            "between 0 and 55",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 56
+                )
+            ),
+        )
+        self.assertIn(
+            "evidence not found",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+            ),
+        )
+
+        base = {"slug": "sample", "worktree": str(worktree), "pid": 123}
+        evidence.write_text(
+            json.dumps({**base, "slug": "other", "status": "RUNNING"}),
+            encoding="utf-8",
+        )
+        self.assertIn(
+            "does not match",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+            ),
+        )
+
+        evidence.write_text(
+            json.dumps({**base, "status": "COMPLETE"}), encoding="utf-8"
+        )
+        self.assertIn(
+            "no terminal result",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+            ),
+        )
+
+        evidence.write_text(
+            json.dumps({**base, "status": "UNKNOWN"}), encoding="utf-8"
+        )
+        self.assertIn(
+            "invalid detached launcher status",
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+            ),
+        )
+
+        evidence.write_text(
+            json.dumps({**base, "status": "RUNNING"}), encoding="utf-8"
+        )
+        with mock.patch.object(launcher, "process_alive", return_value=False):
+            self.assert_blocked(
+                lambda: launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+            )
+        self.assertEqual(launcher.read_json(evidence)["status"], "BLOCKED")
+
+        evidence.write_text(
+            json.dumps({**base, "status": "RUNNING", "stage": "plan"}),
+            encoding="utf-8",
+        )
+        with mock.patch.object(launcher, "process_alive", return_value=True):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                launcher.wait_for_detached_launcher(
+                    evidence, worktree, "sample", 0
+                )
+        self.assertEqual(json.loads(output.getvalue())["status"], "RUNNING")
+
+        evidence.write_text(
+            json.dumps(
+                {
+                    **base,
+                    "status": "COMPLETE",
+                    "result": {"status": "COMPLETE", "stage": "plan"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            launcher.wait_for_detached_launcher(evidence, worktree, "sample", 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "COMPLETE")
+
+    def test_configuration_git_and_review_helpers_fail_closed(self) -> None:
+        worktree = Path(tempfile.mkdtemp(prefix="ecc-vsdd-config-helper-"))
+        with mock.patch.dict(
+            os.environ, {"CLAUDE_CODE_DISABLE_WORKFLOWS": "1"}, clear=False
+        ):
+            self.assertEqual(
+                launcher.workflows_disabled(worktree),
+                "CLAUDE_CODE_DISABLE_WORKFLOWS=1",
+            )
+        settings = worktree / ".claude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text('{"disableWorkflows": true}', encoding="utf-8")
+        self.assertIn("settings.json", launcher.workflows_disabled(worktree) or "")
+
+        invalid_version = subprocess.CompletedProcess(
+            ["claude", "--version"], 1, stdout="", stderr="broken"
+        )
+        with mock.patch.object(launcher.subprocess, "run", return_value=invalid_version):
+            self.assertIn(
+                "cannot determine",
+                self.assert_blocked(lambda: launcher.claude_version("claude")),
+            )
+        self.assertIn(
+            "git status failed",
+            self.assert_blocked(lambda: launcher.git_output(worktree, "status")),
+        )
+        with mock.patch.object(
+            launcher,
+            "git_output",
+            return_value='?? one.txt\nR  old.txt -> new.txt\nx',
+        ):
+            self.assertEqual(launcher.changed_paths(worktree), {"one.txt", "new.txt"})
+
+        review = worktree / "review.md"
+        review.write_text(
+            "---\nverdict: PASS\nreviewer_model: opus\n"
+            "reviewer_effort: xhigh\n---\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(launcher.parse_frontmatter(review)["verdict"], "PASS")
+        launcher.require_pass(review)
+        for key, value, expected in (
+            ("verdict", "REVISE", "PASS verdict"),
+            ("reviewer_model", "sonnet", "reviewer_model"),
+            ("reviewer_effort", "high", "reviewer_effort"),
+        ):
+            text = review.read_text(encoding="utf-8").replace(
+                f"{key}: " + launcher.parse_frontmatter(review)[key],
+                f"{key}: {value}",
+            )
+            review.write_text(text, encoding="utf-8")
+            self.assertIn(
+                expected,
+                self.assert_blocked(lambda path=review: launcher.require_pass(path)),
+            )
+            review.write_text(
+                "---\nverdict: PASS\nreviewer_model: opus\n"
+                "reviewer_effort: xhigh\n---\n",
+                encoding="utf-8",
+            )
+
+    def test_state_and_gate_helpers_cover_rejection_paths(self) -> None:
+        invalid_state = {
+            "status": "STOPPED",
+            "implementation_session_id": "already-bound",
+            "phases": {},
+        }
+        self.assertGreaterEqual(
+            len(launcher.stage_state_issues("plan", invalid_state, None)), 3
+        )
+        self.assertGreaterEqual(
+            len(launcher.stage_state_issues("revise-plan", invalid_state, "wrong")),
+            4,
+        )
+        self.assertGreaterEqual(
+            len(launcher.stage_state_issues("implement", invalid_state, "wrong")), 4
+        )
+        self.assertIn(
+            "remediation phase must be PENDING",
+            launcher.stage_state_issues("remediate", invalid_state, None),
+        )
+
+        invalid_json = subprocess.CompletedProcess(
+            ["runtime"], 0, stdout="not-json", stderr=""
+        )
+        with mock.patch.object(launcher.subprocess, "run", return_value=invalid_json):
+            self.assertIn(
+                "invalid output",
+                self.assert_blocked(
+                    lambda: launcher.require_runtime_preflight(
+                        ROOT, Path("/tmp"), "sample", "plan", None
+                    )
+                ),
+            )
+            self.assertEqual(
+                launcher.task_integrity_issue(ROOT, Path("/tmp"), "sample"),
+                "task-integrity gate returned invalid output",
+            )
+
+        blocked = subprocess.CompletedProcess(
+            ["runtime"], 1, stdout='{"status":"BLOCKED","error":"stale"}', stderr=""
+        )
+        with mock.patch.object(launcher.subprocess, "run", return_value=blocked):
+            self.assertIn(
+                "stale",
+                launcher.task_integrity_issue(ROOT, Path("/tmp"), "sample") or "",
+            )
+
+        state_path = Path(tempfile.mkdtemp(prefix="ecc-vsdd-bind-helper-")) / "state.json"
+        state_path.write_text(
+            json.dumps({"implementation_session_id": "first"}), encoding="utf-8"
+        )
+        self.assertIn(
+            "cannot replace",
+            self.assert_blocked(
+                lambda: launcher.bind_implementation_session(state_path, "second")
+            ),
+        )
 
     def test_detached_plan_can_be_polled_to_completion_and_binds_session(self) -> None:
         root, spec = self.make_repo()
@@ -309,7 +592,7 @@ class LaunchWorkerTest(unittest.TestCase):
 
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 str(SCRIPT),
                 "plan",
                 "--slug",
@@ -330,7 +613,7 @@ class LaunchWorkerTest(unittest.TestCase):
 
         duplicate = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 str(SCRIPT),
                 "plan",
                 "--slug",
@@ -354,7 +637,7 @@ class LaunchWorkerTest(unittest.TestCase):
         for _ in range(10):
             waited = subprocess.run(
                 [
-                    "python3",
+                    sys.executable,
                     str(SCRIPT),
                     "wait",
                     "--slug",

@@ -3,6 +3,7 @@
 ## 前提
 
 - Claude Code 2.1.203以上
+- macOSまたはLinux、Python 3.10以上（Windows nativeは未対応。WSLはLinux扱い）
 - Dynamic Workflowsが有効なClaude CodeプランまたはAPI環境
 - Git repository
 - ECC plugin
@@ -69,7 +70,7 @@ StartのHaiku処理は2段階です。最初は明示的な`operation: bootstrap
 | `--base <ref>` | detected repository default | `origin/HEAD`等から検出するintegration branchのcleanな起点。曖昧なら明示が必要 |
 | `--until review\|pr` | `review` | 独立reviewまで、またはpush/PR作成まで |
 
-`--until pr`は外部変更の明示的な許可です。失敗したgateを無視する許可ではありません。PR worker起動前と各Bash直前にstrict/global hookがsession-bound認可とruntime PR preflightを実行し、この許可と現行review証跡がなければpush/PR操作を開始できません。
+`--until pr`は外部変更の明示的な許可です。許可されるのは、現在の1行の`start|resume ... --until pr`プロンプトだけです。session ID・canonical cwd・prompt IDへ結び付けられ、別のユーザープロンプトが送られると消去されます。失敗したgateを無視する許可ではありません。PR worker起動時に一度だけ消費され、実際のagent IDへランダムcapabilityを結び付けます。この許可と現行review証跡がなければpush/PR操作を開始できません。
 
 要求したReviewまたはPR境界では、成果物snapshotに加えてruntime terminal gateが`status: COMPLETE`と`reached`を保存します。ReviewからPRへ延長するときだけ、明示`--until pr`を`extend` gateが記録し、runをPhase 9へ再オープンします。
 
@@ -164,7 +165,7 @@ Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
 | Requirements / Plan / Workflow review 3回失敗 | artifactを手動確認し、上流入力を修正してresume |
 | TASK 3attempt失敗 | failure evidenceと依存TASKを確認し、仕様または実装条件を修正 |
 | Code/Security review修正上限 | CRITICAL/HIGHを確認し、上流spec変更として再実行 |
-| push / `gh` failure | auth、remote、権限を修正してresume |
+| PR broker / push / `gh` failure | auth、remote、権限を修正し、新しいexact `resume ... --until pr`で再開 |
 
 ## review修正の自動切替
 
@@ -181,7 +182,9 @@ Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
 - blocking findingなし、MEDIUM/manual follow-upあり: Draft PR
 - blocking findingなし、MEDIUM/manual follow-upなし: Ready PR
 
-どちらのPR状態でも、`pr-result.json`に実URL/number、base branch/SHA、head branch/SHA、target commitを保存し、current integration `HEAD`に対するruntime snapshotが成功しなければPhase 9は未完了です。
+どちらのPR状態でも、guardが観測できる直接commandと一般的なshell/interpreter wrapperでは、全workerの`git push`、`git send-pack`、`gh pr`/`gh api`変更操作を拒否します。PR workerは`pr-body.md`だけを作り、`SubagentStart`で注入されたcapability/session/agent IDを専用brokerへ渡します。brokerだけがpreflightをpush前とPR作成前に再実行し、remote base、pushed head、GitHub base/head/draft identityを検証して`pr-result.json`を原子的に保存します。current integration `HEAD`に対するruntime snapshotが成功しなければPhase 9は未完了です。
+
+hookはClaude Codeが観測する通常のtool commandを防御しますが、任意バイナリや難読化されたスクリプトの内部通信までOSレベルで遮断するsandboxではありません。信頼できないworker/toolにはGitHub資格情報を渡さず、送信network policy、protected branch/ruleset、最小権限tokenを併用してください。
 
 ## Phaseを個別実行する
 
@@ -197,7 +200,8 @@ Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
 /ecc-vsdd:vsdd-review-plan mail-groups-filter
 /ecc-vsdd:vsdd-impl mail-groups-filter
 /ecc-vsdd:vsdd-review mail-groups-filter
-/ecc-vsdd:vsdd-pr mail-groups-filter
+# Phase 9の外部publicationはmanaged runのexact promptだけで許可
+/ecc-vsdd:vsdd-run resume mail-groups-filter --until pr
 ```
 
 `/vsdd-impl <slug> TASK-001`のようなTASK単位実行は自動workflowでは使用しません。`tasks.md`全体をSonnet Dynamic Workflowが読み、実行方法を決定します。

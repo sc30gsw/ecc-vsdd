@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install --requirement requirements-dev.txt
+      - name: Compile runtime scripts
+        run: python -m py_compile scripts/*.py
+      - name: Validate JSON files
+        run: python -c "import json,pathlib; [json.loads(p.read_text()) for p in pathlib.Path('.').rglob('*.json') if '.git' not in p.parts]"
+      - name: Run tests with subprocess coverage
+        run: |
+          coverage erase
+          coverage run -m unittest discover -s tests -v
+          coverage combine
+      - name: Enforce overall and per-script line coverage
+        run: |
+          coverage report
+          coverage json -o coverage.json
+          python tools/check-line-coverage.py coverage.json --minimum 80 scripts/*.py
+
+  plugin-validation:
+    name: Claude Code plugin validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install supported Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code@2.1.212
+      - name: Validate whitespace
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
+      - name: Validate plugin and marketplace manifests
+        run: claude plugin validate . --strict

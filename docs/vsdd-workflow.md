@@ -175,4 +175,4 @@ orchestratorは全workerへ`execution_mode: unattended`のcontext envelopeを渡
 
 CRITICAL/HIGHが残る場合、PRは作成しません。すべてのblocking reviewがPASSした後、MEDIUMまたはmanual follow-upがあればDraft PR、なければready PRを作成します。
 
-`--until pr`だけがpushとPR作成の権限を与えます。モデルや検証gateのwaiverにはなりません。PR workerはURL/number、base branch/SHA、head branch/SHA、target commitを`pr-result.json`へ保存し、runtime snapshotがcurrent `HEAD`との一致を検証して初めてPhase 9を完了します。
+現在のexact `start|resume ... --until pr`プロンプトだけがpushとPR作成の権限を与えます。session/cwd/promptへ束縛され、次のユーザープロンプトで消えます。モデルや検証gateのwaiverにはなりません。guardが観測できる直接commandと一般的なshell/interpreter wrapperのpush/GitHub変更を拒否し、実際のPR workerへ結び付けたcapabilityを持つ専用brokerだけを対応publication経路とします。brokerがURL/number、base branch/SHA、head branch/SHA、target commitを`pr-result.json`へ保存し、runtime snapshotがcurrent `HEAD`との一致を検証して初めてPhase 9を完了します。

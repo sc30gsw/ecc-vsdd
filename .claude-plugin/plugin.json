@@ -1,11 +1,15 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "ecc-vsdd",
-  "version": "0.3.7",
+  "displayName": "ecc-vsdd",
+  "version": "1.0.0-rc.1",
   "description": "VSDDワークフロー — Fable制御、決定的な無人実行gate、Sonnet Dynamic Workflow、独立Opusレビューによる再開可能な自動開発",
   "author": {
     "name": "sc30gsw"
   },
   "dependencies": ["ecc"],
   "homepage": "https://zenn.dev/sc30gsw/articles/1373752d9713b3",
+  "repository": "https://github.com/sc30gsw/ecc-vsdd",
+  "license": "MIT",
   "keywords": ["vsdd", "sdd", "tdd", "spec-driven-development", "workflow"]
 }

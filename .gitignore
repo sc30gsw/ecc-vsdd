@@ -1,1 +1,8 @@
 .squish/
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/

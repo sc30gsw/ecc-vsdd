@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import stat
 import subprocess
@@ -56,7 +58,103 @@ ORCHESTRATOR_TOOLS = {"Read", "Grep", "Glob", "LS", "Skill", "Agent", "Task"}
 ORCHESTRATOR_AGENTS = WORKERS - {"ecc-vsdd:vsdd-implementation-driver"}
 ORCHESTRATOR_SKILLS = {"ecc-vsdd:vsdd-run", "vsdd-run"}
 AUTHORIZATION_TTL_SECONDS = 7 * 24 * 60 * 60
+PR_CONSENT_TTL_SECONDS = 24 * 60 * 60
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PROMPT_ID_RE = re.compile(r"^[a-zA-Z0-9-]{8,128}$")
+SAFE_GIT_SUBCOMMANDS = {
+    "add",
+    "am",
+    "apply",
+    "archive",
+    "bisect",
+    "blame",
+    "branch",
+    "bundle",
+    "cat-file",
+    "check-attr",
+    "check-ignore",
+    "check-ref-format",
+    "checkout",
+    "cherry",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "describe",
+    "diff",
+    "diff-tree",
+    "fetch",
+    "for-each-ref",
+    "format-patch",
+    "fsck",
+    "grep",
+    "hash-object",
+    "help",
+    "init",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "ls-tree",
+    "merge",
+    "merge-base",
+    "merge-tree",
+    "mv",
+    "notes",
+    "pull",
+    "range-diff",
+    "rebase",
+    "reflog",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rev-list",
+    "rev-parse",
+    "rm",
+    "show",
+    "show-ref",
+    "sparse-checkout",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "update-index",
+    "update-ref",
+    "version",
+    "worktree",
+}
+SAFE_GH_COMMANDS = {
+    ("--version",),
+    ("auth", "status"),
+    ("help",),
+    ("issue", "list"),
+    ("issue", "status"),
+    ("issue", "view"),
+    ("pr", "checks"),
+    ("pr", "diff"),
+    ("pr", "list"),
+    ("pr", "status"),
+    ("pr", "view"),
+    ("release", "list"),
+    ("release", "view"),
+    ("repo", "list"),
+    ("repo", "view"),
+    ("run", "list"),
+    ("run", "view"),
+    ("run", "watch"),
+    ("search", "code"),
+    ("search", "commits"),
+    ("search", "issues"),
+    ("search", "prs"),
+    ("search", "repos"),
+    ("status",),
+    ("workflow", "list"),
+    ("workflow", "view"),
+}
+SHELL_INTERPRETERS = {"bash", "dash", "ksh", "sh", "zsh"}
+SHELL_COMMAND_WRAPPERS = {"command", "env", "exec", "nohup", "sudo"}
+CODE_INTERPRETERS = {"node", "nodejs", "perl", "python", "python3", "ruby"}
 
 
 def deny(message: str) -> None:
@@ -115,7 +213,14 @@ def write_private_json(path: Path, record: dict) -> None:
     ensure_private_directory(root)
     ensure_private_directory(path.parent)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(record, stream, sort_keys=True)
@@ -136,7 +241,9 @@ def read_private_json(path: Path) -> dict | None:
         ensure_private_directory(path.parent)
         descriptor = os.open(
             path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
         )
     except (ValueError, FileNotFoundError, OSError):
         return None
@@ -185,6 +292,144 @@ def pr_authorization_record_path(session_id: object) -> Path | None:
     return guard_runtime_root() / "pr-authorized-sessions" / f"{safe_id}.json"
 
 
+def pr_consent_record_path(session_id: object) -> Path | None:
+    safe_id = safe_session_id(session_id)
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "pr-consent-sessions" / f"{safe_id}.json"
+
+
+def remove_private_record(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        deny(f"cannot clear guard session state: {error}")
+
+
+def exact_pr_consent_operation(prompt: object) -> str | None:
+    raw = str(prompt or "")
+    if not raw or "\n" in raw or "\r" in raw or raw != raw.strip():
+        return None
+    try:
+        argv = shlex.split(raw)
+    except ValueError:
+        return None
+    if len(argv) < 4 or argv[0] not in {
+        "/ecc-vsdd:vsdd-run",
+        "/vsdd-run",
+    }:
+        return None
+    operation = argv[1]
+    if operation not in {"start", "resume"}:
+        if operation in {"status", "cancel", "cleanup"} or not SLUG_RE.fullmatch(
+            operation
+        ):
+            return None
+        operation = "start"
+    until_values: list[str] = []
+    index = 2
+    while index < len(argv):
+        token = argv[index]
+        if token == "--until":
+            if index + 1 >= len(argv):
+                return None
+            until_values.append(argv[index + 1])
+            index += 2
+            continue
+        if token.startswith("--until="):
+            until_values.append(token.split("=", 1)[1])
+        index += 1
+    if until_values != ["pr"]:
+        return None
+    return operation
+
+
+def handle_user_prompt(payload: dict) -> None:
+    path = pr_consent_record_path(payload.get("session_id"))
+    remove_private_record(path)
+    operation = exact_pr_consent_operation(payload.get("prompt"))
+    if operation is None:
+        return
+    cwd = normalized_cwd(payload)
+    prompt_id = str(payload.get("prompt_id") or "")
+    prompt = str(payload.get("prompt") or "")
+    if path is None or cwd is None or not PROMPT_ID_RE.fullmatch(prompt_id):
+        deny("explicit PR consent requires session_id, cwd, and prompt_id")
+    try:
+        write_private_json(
+            path,
+            {
+                "schema_version": 1,
+                "authorization": "vsdd-pr-consent",
+                "session_id": safe_session_id(payload.get("session_id")),
+                "cwd": cwd,
+                "prompt_id": prompt_id,
+                "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "operation": operation,
+                "created_at": int(time.time()),
+            },
+        )
+    except OSError as error:
+        deny(f"cannot persist prompt-bound PR consent: {error}")
+
+
+def current_pr_consent(
+    payload: dict, *, expected_operation: str | None = None
+) -> tuple[Path, dict]:
+    path = pr_consent_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    prompt_id = str(payload.get("prompt_id") or "")
+    if record is None or path is None or not PROMPT_ID_RE.fullmatch(prompt_id):
+        deny("operation lacks prompt-bound PR consent")
+    created_at = record.get("created_at")
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    if not (
+        record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-pr-consent"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and record.get("prompt_id") == prompt_id
+        and re.fullmatch(r"[0-9a-f]{64}", str(record.get("prompt_sha256") or ""))
+        and record.get("operation") in {"start", "resume"}
+        and 0 <= age <= PR_CONSENT_TTL_SECONDS
+    ):
+        deny("operation lacks valid prompt-bound PR consent")
+    if expected_operation and record.get("operation") != expected_operation:
+        deny(
+            "prompt-bound PR consent operation does not match "
+            f"{expected_operation!r}"
+        )
+    return path, record
+
+
+def consume_pr_consent(payload: dict, worktree: Path, slug: str) -> None:
+    path, record = current_pr_consent(payload)
+    tool_use_id = str(payload.get("tool_use_id") or "")
+    if not tool_use_id:
+        deny("PR worker launch lacks a tool_use_id for prompt-bound PR consent")
+    consumed_by = record.get("consumed_by_tool_use_id")
+    if consumed_by:
+        if not (
+            consumed_by == tool_use_id
+            and record.get("slug") == slug
+            and record.get("integration_worktree") == str(worktree)
+        ):
+            deny("prompt-bound PR consent was already consumed")
+        return
+    record["consumed_by_tool_use_id"] = tool_use_id
+    record["slug"] = slug
+    record["integration_worktree"] = str(worktree)
+    record["consumed_at"] = int(time.time())
+    try:
+        write_private_json(path, record)
+    except OSError as error:
+        deny(f"cannot consume prompt-bound PR consent: {error}")
+
+
 def authorize_strict_session(payload: dict) -> None:
     path = authorization_record_path(payload.get("session_id"))
     cwd = normalized_cwd(payload)
@@ -231,17 +476,45 @@ def clear_session_state(payload: dict) -> None:
     for resolver in (
         authorization_record_path,
         pr_authorization_record_path,
+        pr_consent_record_path,
         session_record_path,
     ):
-        path = resolver(payload.get("session_id"))
-        if path is None:
+        remove_private_record(resolver(payload.get("session_id")))
+
+
+def sweep_expired_session_state() -> None:
+    root = guard_runtime_root()
+    ensure_private_directory(root)
+    now_value = time.time()
+    for directory_name in (
+        "authorized-sessions",
+        "pr-authorized-sessions",
+        "pr-consent-sessions",
+        "session-models",
+    ):
+        directory = root / directory_name
+        if not directory.exists():
             continue
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError as error:
-            deny(f"cannot clear guard session state: {error}")
+        ensure_private_directory(directory)
+        for path in directory.glob("*.json"):
+            record = read_private_json(path)
+            if record is None:
+                continue
+            created_at = record.get("created_at")
+            if isinstance(created_at, int):
+                age = now_value - created_at
+            else:
+                try:
+                    age = now_value - path.stat().st_mtime
+                except OSError:
+                    continue
+            ttl = (
+                PR_CONSENT_TTL_SECONDS
+                if directory_name == "pr-consent-sessions"
+                else AUTHORIZATION_TTL_SECONDS
+            )
+            if age < 0 or age > ttl:
+                remove_private_record(path)
 
 
 def normalized_agent(agent_type: object) -> str:
@@ -290,7 +563,14 @@ def record_session_model(payload: dict) -> None:
     if path is None:
         return
     model = str(raw_model).lower()
-    write_private_json(path, {"agent_type": agent_type, "model": model})
+    write_private_json(
+        path,
+        {
+            "agent_type": agent_type,
+            "model": model,
+            "created_at": int(time.time()),
+        },
+    )
     expected = EXPECTED_MODEL[agent_type]
     if not model or expected not in model:
         print(
@@ -424,6 +704,7 @@ def check_pr_launch(payload: dict, tool_input: dict) -> None:
         deny("PR worker launch run_state does not match its slug and worktree")
 
     run_pr_preflight(worktree, slug)
+    consume_pr_consent(payload, worktree, slug)
     authorize_pr_session(payload, worktree, slug)
 
 
@@ -467,16 +748,40 @@ def authorize_pr_session(payload: dict, worktree: Path, slug: str) -> None:
     cwd = normalized_cwd(payload)
     if path is None or cwd is None:
         deny("cannot persist PR worker launch authorization")
+    prompt_id = str(payload.get("prompt_id") or "")
+    launch_tool_use_id = str(payload.get("tool_use_id") or "")
+    if not PROMPT_ID_RE.fullmatch(prompt_id) or not launch_tool_use_id:
+        deny("cannot bind PR authorization to its prompt and launch tool")
+    existing = read_private_json(path)
+    capability = secrets.token_urlsafe(32)
+    agent_id = None
+    if existing is not None:
+        same_launch = (
+            existing.get("session_id") == safe_session_id(payload.get("session_id"))
+            and existing.get("cwd") == cwd
+            and existing.get("prompt_id") == prompt_id
+            and existing.get("launch_tool_use_id") == launch_tool_use_id
+            and existing.get("slug") == slug
+            and existing.get("integration_worktree") == str(worktree)
+        )
+        if not same_launch:
+            deny("conflicting PR worker launch authorization already exists")
+        capability = str(existing.get("capability") or capability)
+        agent_id = existing.get("agent_id")
     try:
         write_private_json(
             path,
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "authorization": "vsdd-pr",
                 "session_id": safe_session_id(payload.get("session_id")),
                 "cwd": cwd,
+                "prompt_id": prompt_id,
+                "launch_tool_use_id": launch_tool_use_id,
                 "slug": slug,
                 "integration_worktree": str(worktree),
+                "capability": capability,
+                "agent_id": agent_id,
                 "created_at": int(time.time()),
             },
         )
@@ -484,7 +789,51 @@ def authorize_pr_session(payload: dict, worktree: Path, slug: str) -> None:
         deny(f"cannot persist PR worker launch authorization: {error}")
 
 
-def check_pr_worker_tool(payload: dict) -> None:
+def bind_pr_subagent(payload: dict) -> None:
+    if normalized_agent(payload.get("agent_type")) != "ecc-vsdd:vsdd-pr-worker":
+        return
+    path = pr_authorization_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    agent_id = str(payload.get("agent_id") or "")
+    if record is None or not agent_id:
+        deny("PR worker start lacks a launch authorization")
+    if not (
+        record.get("schema_version") == 2
+        and record.get("authorization") == "vsdd-pr"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and record.get("prompt_id") == str(payload.get("prompt_id") or "")
+        and record.get("agent_id") in {None, agent_id}
+    ):
+        deny("PR worker start does not match its launch authorization")
+    capability = str(record.get("capability") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", capability):
+        deny("PR worker launch authorization lacks a valid capability")
+    record["agent_id"] = agent_id
+    record["agent_bound_at"] = int(time.time())
+    try:
+        write_private_json(path, record)
+    except OSError as error:
+        deny(f"cannot bind the actual PR worker: {error}")
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SubagentStart",
+                    "additionalContext": (
+                        "Use only the bundled VSDD PR action broker for push and PR "
+                        "creation.\n"
+                        f"VSDD_PR_ACTION_CAPABILITY: {capability}\n"
+                        f"VSDD_PR_ACTION_SESSION_ID: {record['session_id']}\n"
+                        f"VSDD_PR_ACTION_AGENT_ID: {agent_id}"
+                    ),
+                }
+            }
+        )
+    )
+
+
+def check_pr_worker_tool(payload: dict) -> dict:
     path = pr_authorization_record_path(payload.get("session_id"))
     record = read_private_json(path) if path is not None else None
     if record is None or not payload.get("agent_id"):
@@ -493,18 +842,393 @@ def check_pr_worker_tool(payload: dict) -> None:
     age = time.time() - created_at if isinstance(created_at, int) else -1
     slug = str(record.get("slug") or "")
     if not (
-        record.get("schema_version") == 1
+        record.get("schema_version") == 2
         and record.get("authorization") == "vsdd-pr"
         and record.get("session_id") == safe_session_id(payload.get("session_id"))
         and record.get("cwd") == normalized_cwd(payload)
+        and record.get("prompt_id") == str(payload.get("prompt_id") or "")
         and SLUG_RE.fullmatch(slug)
         and 0 <= age <= AUTHORIZATION_TTL_SECONDS
     ):
         deny("PR worker launch authorization is invalid or expired")
+    if record.get("agent_id") != str(payload.get("agent_id") or ""):
+        deny("PR worker tool use is not from the actual PR worker")
+    if not re.fullmatch(
+        r"[A-Za-z0-9_-]{32,128}", str(record.get("capability") or "")
+    ):
+        deny("PR worker launch authorization lacks a valid capability")
     worktree = Path(str(record.get("integration_worktree") or ""))
     if not worktree.is_absolute() or not worktree.is_dir():
         deny("PR worker launch authorization has no valid integration worktree")
     run_pr_preflight(worktree.resolve(), slug)
+    return record
+
+
+def shell_segments(command: object) -> list[list[str]]:
+    raw = str(command or "")
+    try:
+        lexer = shlex.shlex(raw, posix=True, punctuation_chars=";&|(){}<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return [[raw]] if raw else []
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and all(character in ";&|(){}" for character in token):
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def executable_tokens(segment: list[str]) -> list[str]:
+    tokens = list(segment)
+    while tokens:
+        before = list(tokens)
+        tokens = strip_leading_shell_syntax(tokens)
+        if tokens and Path(tokens[0]).name in {"command", "exec", "nohup", "sudo"}:
+            tokens.pop(0)
+            while tokens and tokens[0].startswith("-"):
+                tokens.pop(0)
+        if tokens and Path(tokens[0]).name == "env":
+            tokens.pop(0)
+            while tokens and (
+                tokens[0].startswith("-")
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0])
+            ):
+                tokens.pop(0)
+        if tokens == before:
+            break
+    return tokens
+
+
+def strip_leading_shell_syntax(segment: list[str]) -> list[str]:
+    """Remove assignments and redirections that may precede a simple command."""
+    tokens = list(segment)
+    while tokens:
+        before = list(tokens)
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+        while tokens:
+            operator_index = 1 if (
+                len(tokens) > 1
+                and tokens[0].isdigit()
+                and re.fullmatch(r"[<>|&]+", tokens[1])
+                and any(character in "<>" for character in tokens[1])
+            ) else 0
+            operator = tokens[operator_index]
+            if not (
+                re.fullmatch(r"[<>|&]+", operator)
+                and any(character in "<>" for character in operator)
+            ):
+                break
+            del tokens[: operator_index + 1]
+            if tokens:
+                tokens.pop(0)
+        if tokens == before:
+            break
+    return tokens
+
+
+def starts_with_command_wrapper(segment: list[str]) -> bool:
+    tokens = strip_leading_shell_syntax(segment)
+    return bool(tokens and Path(tokens[0]).name in SHELL_COMMAND_WRAPPERS)
+
+
+def git_subcommand(tokens: list[str]) -> str:
+    index = 1
+    options_with_values = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+    while index < len(tokens):
+        token = tokens[index]
+        if token in options_with_values:
+            index += 2
+            continue
+        if token.startswith(("--git-dir=", "--work-tree=", "--namespace=")):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token
+    return ""
+
+
+def interpreter_payload(tokens: list[str], executable: str) -> str | None:
+    """Return inline shell/code supplied to a known interpreter, if any."""
+    flags = {"-c"}
+    if executable in {"node", "nodejs", "perl", "ruby"}:
+        flags.add("-e")
+        flags.add("--eval")
+    for index, token in enumerate(tokens[1:], start=1):
+        inline = token in flags
+        if executable in SHELL_INTERPRETERS and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", token):
+            inline = True
+        if inline:
+            return tokens[index + 1] if index + 1 < len(tokens) else ""
+    return None
+
+
+def suspicious_inline_outbound_code(source: str) -> bool:
+    lowered = source.lower()
+    executable_marker = re.search(
+        r"(?:\bgit\b|\bgh\b|\bhub\b|api\.github\.com|github\.com)", lowered
+    )
+    mutation_marker = re.search(
+        r"(?:\bpush\b|send[-_ ]?pack|\bpr\b.{0,20}"
+        r"(?:create|edit|merge|ready|close|reopen)|\bpulls?\b|"
+        r"\b(?:post|put|patch|delete)\b)",
+        lowered,
+    )
+    return executable_marker is not None and mutation_marker is not None
+
+
+def github_http_mutation(tokens: list[str], executable: str) -> bool:
+    lowered = [token.lower() for token in tokens[1:]]
+    joined = " ".join(lowered)
+    if not (
+        "api.github.com" in joined
+        or re.search(r"github\.com/[^/\s]+/[^/\s]+/(?:pulls?|issues?)", joined)
+    ):
+        return False
+    mutation_flags = {
+        "-d",
+        "-f",
+        "-t",
+        "--data",
+        "--data-ascii",
+        "--data-binary",
+        "--data-raw",
+        "--form",
+        "--form-string",
+        "--json",
+        "--post-data",
+        "--post-file",
+        "--body-data",
+        "--body-file",
+        "--upload-file",
+    }
+    for index, token in enumerate(lowered):
+        if token in mutation_flags or any(
+            token.startswith(prefix)
+            for prefix in (
+                "--data=",
+                "--form=",
+                "--json=",
+                "--post-data=",
+                "--post-file=",
+                "--body-data=",
+                "--body-file=",
+                "--upload-file=",
+            )
+        ):
+            return True
+        method = None
+        if token in {"-x", "--request", "--method"} and index + 1 < len(lowered):
+            method = lowered[index + 1]
+        elif token.startswith("-x") and len(token) > 2:
+            method = token[2:]
+        elif token.startswith(("--request=", "--method=")):
+            method = token.split("=", 1)[1]
+        if method and method.upper() not in {"GET", "HEAD"}:
+            return True
+    return False
+
+
+def external_mutation_reason(command: object, *, depth: int = 0) -> str | None:
+    raw = str(command or "")
+    if depth > 4:
+        return "nested command depth is not safely classifiable"
+    if ("\n" in raw or "\r" in raw) and suspicious_inline_outbound_code(raw):
+        return "multiline outbound-capable command is not safely classifiable"
+    if re.search(r"\|\s*(?:ba|da|k|z)?sh(?:\s|$)", raw) and suspicious_inline_outbound_code(
+        raw
+    ):
+        return "outbound-capable command piped to a shell"
+    if ("$" in raw or "`" in raw) and re.search(
+        r"(?:\bgit\b|\bgh\b|\bhub\b|\bcurl\b|\bwget\b|"
+        r"api\.github\.com|\bpush\b|send-pack|\bpulls?\b)",
+        raw,
+        flags=re.IGNORECASE,
+    ):
+        return "unresolved shell expansion in an outbound-capable command"
+    for segment in shell_segments(command):
+        if starts_with_command_wrapper(segment) and suspicious_inline_outbound_code(
+            " ".join(segment)
+        ):
+            return "outbound mutation hidden behind a shell command wrapper"
+        tokens = executable_tokens(segment)
+        if not tokens:
+            continue
+        executable = Path(tokens[0]).name
+        if executable in {"git-push", "git-send-pack"}:
+            return "Git outbound helper mutation"
+        if executable in {"busybox", "find", "parallel", "xargs"} and (
+            suspicious_inline_outbound_code(" ".join(tokens))
+        ):
+            return f"outbound mutation hidden behind {executable}"
+        payload = interpreter_payload(tokens, executable)
+        if executable in SHELL_INTERPRETERS and payload is not None:
+            nested = external_mutation_reason(payload, depth=depth + 1)
+            if nested:
+                return f"nested shell command: {nested}"
+        is_code_interpreter = executable in CODE_INTERPRETERS or bool(
+            re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable)
+        )
+        if is_code_interpreter and payload is not None:
+            if suspicious_inline_outbound_code(payload):
+                return "inline interpreter can perform an outbound mutation"
+        if executable == "git":
+            subcommand = git_subcommand(tokens)
+            if subcommand in {"push", "send-pack"}:
+                return "git outbound mutation"
+            if subcommand not in SAFE_GIT_SUBCOMMANDS:
+                return f"unclassified Git subcommand {subcommand!r}"
+        if executable == "gh" and len(tokens) >= 2:
+            if tokens[1] == "api":
+                return "GitHub API mutation-capable command"
+            command_key = tuple(tokens[1:3])
+            if command_key not in SAFE_GH_COMMANDS and (command_key[:1] not in SAFE_GH_COMMANDS):
+                return f"unclassified GitHub CLI command {command_key!r}"
+        if executable == "hub":
+            return "legacy GitHub CLI command is mutation-capable"
+        if executable in {"curl", "wget"} and github_http_mutation(tokens, executable):
+            return "GitHub HTTP mutation"
+    return None
+
+
+def pr_broker_invocation(command: object) -> dict[str, str] | None:
+    raw = str(command or "")
+    if "vsdd-pr-action.py" not in raw:
+        return None
+    try:
+        lexer = shlex.shlex(raw, posix=True, punctuation_chars=";&|(){}<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        argv = list(lexer)
+    except ValueError as error:
+        deny(f"cannot parse VSDD PR action broker invocation: {error}")
+    if any(token and all(char in ";&|(){}" for char in token) for token in argv):
+        deny("VSDD PR action broker invocation cannot use shell control operators")
+    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    broker = (plugin_root / "scripts" / "vsdd-pr-action.py").resolve()
+    placeholder = "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-pr-action.py"
+    if (
+        len(argv) < 4
+        or Path(argv[0]).name not in {"python", "python3"}
+        or (argv[1] != placeholder and Path(argv[1]).resolve() != broker)
+        or argv[2] != "publish"
+    ):
+        deny("only the bundled VSDD PR action broker publish command is allowed")
+    if any(("$" in token and token != placeholder) or "`" in token for token in argv):
+        deny("shell expansion is prohibited in the PR action broker invocation")
+    value_flags = {
+        "--worktree",
+        "--slug",
+        "--session-id",
+        "--agent-id",
+        "--capability",
+        "--title",
+        "--body-file",
+        "--remote",
+    }
+    flag_values: dict[str, str] = {}
+    index = 3
+    while index < len(argv):
+        flag = argv[index]
+        if flag == "--draft":
+            if flag in flag_values:
+                deny("duplicate PR action broker --draft flag")
+            flag_values[flag] = "true"
+            index += 1
+            continue
+        if flag not in value_flags or flag in flag_values:
+            deny(f"invalid or duplicate PR action broker argument {flag!r}")
+        if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+            deny(f"missing value for PR action broker argument {flag!r}")
+        flag_values[flag] = argv[index + 1]
+        index += 2
+    required = value_flags - {"--remote"}
+    if not required.issubset(flag_values):
+        deny(
+            "PR action broker invocation is missing: "
+            + ", ".join(sorted(required - flag_values.keys()))
+        )
+    return flag_values
+
+
+def check_pr_broker_context(payload: dict, fields: dict[str, str], record: dict) -> None:
+    expected = {
+        "--session-id": safe_session_id(payload.get("session_id")),
+        "--agent-id": str(payload.get("agent_id") or ""),
+        "--capability": str(record.get("capability") or ""),
+        "--slug": str(record.get("slug") or ""),
+        "--worktree": str(record.get("integration_worktree") or ""),
+    }
+    for flag, expected_value in expected.items():
+        actual = fields.get(flag, "")
+        if flag == "--worktree":
+            try:
+                matches = Path(actual).resolve() == Path(expected_value).resolve()
+            except OSError:
+                matches = False
+        else:
+            matches = secrets.compare_digest(actual, expected_value)
+        if not matches:
+            deny(f"PR action broker invocation does not match authorization: {flag}")
+
+
+def pr_boundary_operation(command: object, *, depth: int = 0) -> str | None:
+    if depth > 4:
+        return None
+    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    runtime = (plugin_root / "scripts" / "vsdd-runtime-state.py").resolve()
+    placeholder = "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py"
+    for segment in shell_segments(command):
+        tokens = executable_tokens(segment)
+        if tokens:
+            executable = Path(tokens[0]).name
+            payload = interpreter_payload(tokens, executable)
+            if executable in SHELL_INTERPRETERS and payload is not None:
+                nested = pr_boundary_operation(payload, depth=depth + 1)
+                if nested is not None:
+                    return nested
+            if payload is not None and "vsdd-runtime-state.py" in payload:
+                if re.search(r"\bbootstrap\b", payload) and re.search(
+                    r"--until(?:=|\s+)pr\b", payload
+                ):
+                    return "start"
+                if re.search(r"\bextend\b", payload) and re.search(
+                    r"--until(?:=|\s+)pr\b", payload
+                ):
+                    return "resume"
+        if len(tokens) < 4 or not re.fullmatch(
+            r"python(?:\d+(?:\.\d+)*)?", Path(tokens[0]).name
+        ):
+            continue
+        if tokens[1] != placeholder and Path(tokens[1]).resolve() != runtime:
+            continue
+        runtime_command = tokens[2]
+        if runtime_command not in {"bootstrap", "extend"}:
+            continue
+        until_values: list[str] = []
+        index = 3
+        while index < len(tokens):
+            if tokens[index] == "--until" and index + 1 < len(tokens):
+                until_values.append(tokens[index + 1])
+                index += 2
+                continue
+            if tokens[index].startswith("--until="):
+                until_values.append(tokens[index].split("=", 1)[1])
+            index += 1
+        if until_values == ["pr"]:
+            return "start" if runtime_command == "bootstrap" else "resume"
+    return None
 
 
 def check_launcher(command: object) -> None:
@@ -580,7 +1304,17 @@ def main() -> None:
     strict = arguments == ["--strict"]
     session_start = arguments == ["--session-start"]
     session_end = arguments == ["--session-end"]
-    if arguments and not strict and not session_start and not session_end:
+    user_prompt_submit = arguments == ["--user-prompt-submit"]
+    subagent_start = arguments == ["--subagent-start"]
+    if arguments and not any(
+        (
+            strict,
+            session_start,
+            session_end,
+            user_prompt_submit,
+            subagent_start,
+        )
+    ):
         deny("unsupported guard argument")
 
     try:
@@ -589,10 +1323,17 @@ def main() -> None:
         deny(f"invalid hook input: {error}")
 
     if session_start:
+        sweep_expired_session_state()
         record_session_model(payload)
         return
     if session_end:
         clear_session_state(payload)
+        return
+    if user_prompt_submit:
+        handle_user_prompt(payload)
+        return
+    if subagent_start:
+        bind_pr_subagent(payload)
         return
 
     agent_type = normalized_agent(payload.get("agent_type"))
@@ -613,8 +1354,35 @@ def main() -> None:
             allow_unobservable=agent_type
             != "ecc-vsdd:vsdd-implementation-driver",
         )
-        if agent_type == "ecc-vsdd:vsdd-pr-worker" and tool_name == "Bash":
-            check_pr_worker_tool(payload)
+        if tool_name == "Bash":
+            boundary_operation = pr_boundary_operation(tool_input.get("command"))
+            if boundary_operation is not None:
+                expected_agent = (
+                    "ecc-vsdd:vsdd-init-worker"
+                    if boundary_operation == "start"
+                    else "ecc-vsdd:vsdd-status-worker"
+                )
+                if agent_type != expected_agent:
+                    deny(
+                        f"only {expected_agent} may change the PR execution boundary"
+                    )
+                current_pr_consent(
+                    payload,
+                    expected_operation=boundary_operation,
+                )
+            broker_fields = pr_broker_invocation(tool_input.get("command"))
+            if broker_fields is not None and agent_type != "ecc-vsdd:vsdd-pr-worker":
+                deny("only the actual PR worker may invoke the PR action broker")
+            mutation = external_mutation_reason(tool_input.get("command"))
+            if mutation:
+                deny(
+                    "direct external Git/GitHub mutation is prohibited "
+                    f"({mutation}); use the bundled VSDD PR action broker"
+                )
+            if agent_type == "ecc-vsdd:vsdd-pr-worker":
+                record = check_pr_worker_tool(payload)
+                if broker_fields is not None:
+                    check_pr_broker_context(payload, broker_fields, record)
         allow_validated_tool(strict or strict_session_authorized(payload))
         return
 

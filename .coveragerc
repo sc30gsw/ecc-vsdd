@@ -1,0 +1,12 @@
+[run]
+branch = True
+source = scripts
+parallel = True
+patch = subprocess
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 1
+exclude_also =
+    if __name__ == .__main__.:

@@ -142,10 +142,10 @@ custom agent frontmatterには`ultracode`を書かず、launcherだけがセッ�
 ### `vsdd-pr`
 
 ```text
-/ecc-vsdd:vsdd-pr <slug>
+/ecc-vsdd:vsdd-run resume <slug> --until pr
 ```
 
-Sonnet `medium`がREQ → Design → TASK → commit表、test plan、verification、review summaryを含むPRを作成します。実際のURL/numberとbase/head/target SHAを`pr-result.json`へ保存し、runtime snapshotがcurrent `HEAD`を検証します。
+このSkillはmanaged runのPhase 9からだけ実行されます。現在のexact `--until pr`プロンプトがない単独呼出しはpublication権限になりません。Sonnet `medium`はREQ → Design → TASK → commit表、test plan、verification、review summaryを`pr-body.md`へ作り、注入されたcapabilityで専用brokerを1回だけ呼びます。guardが観測できる直接commandと一般的なshell/interpreter wrapperのpush/GitHub変更は拒否します。brokerがremote base・current preflight・GitHub base/head/draft identityを検証し、実URL/numberとbase/head/target SHAを`pr-result.json`へ保存した後、runtime snapshotがcurrent `HEAD`を検証します。
 
 - CRITICAL/HIGHあり: 作成しない
 - MEDIUM/manual follow-upあり: Draft
