@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 0.3.6
+version: 0.3.7
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -165,7 +165,7 @@ Launch code and security reviews independently, preferably concurrently, against
 
 Use a fresh `vsdd-remediation-worker` at Sonnet `high` for the first ordinary fix. Use the ultracode launcher with stage `remediate` immediately when either report says `remediation_mode: workflow`, or for the second remediation round when blocking findings remain. After every fix, launch two new Opus reviewers. Allow the initial review and at most two remediation/re-review rounds; then block.
 
-Never create a PR with unresolved CRITICAL/HIGH. If MEDIUM or a manual follow-up remains, have the PR worker create a draft PR; otherwise create a ready PR. Launch it only with the exact Phase 9 `VSDD_RUN_CONTEXT`; the strict hook must parse that envelope and receive `READY` from runtime PR preflight before the Agent call is allowed.
+Never create a PR with unresolved CRITICAL/HIGH. If MEDIUM or a manual follow-up remains, have the PR worker create a draft PR; otherwise create a ready PR. Launch it only with the exact Phase 9 `VSDD_RUN_CONTEXT`; the strict hook must parse that envelope and receive `READY` from runtime PR preflight before the Agent call is allowed. Its session-bound authorization and current preflight must also remain valid before every PR-worker Bash command.
 
 After `gh pr create`, require the PR worker to persist `pr-result.json` with URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit. The Status worker must snapshot phase `pr`; without this current structured evidence the run is not complete.
 

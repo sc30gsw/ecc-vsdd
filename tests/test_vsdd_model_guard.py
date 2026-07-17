@@ -42,12 +42,12 @@ class ModelGuardTest(unittest.TestCase):
         )
 
     def run_global_guard(
-        self, payload: dict, *, data_root: str
+        self, payload: dict, *, data_root: str, plugin_root: Path = ROOT
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env.update(
             {
-                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "CLAUDE_PLUGIN_ROOT": str(plugin_root),
                 "TMPDIR": data_root,
             }
         )
@@ -235,6 +235,7 @@ class ModelGuardTest(unittest.TestCase):
             encoding="utf-8",
         )
         allowed = self.orchestrator_launch()
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-pr-session-")
         allowed["tool_input"] = {
             "subagent_type": "ecc-vsdd:vsdd-pr-worker",
             "prompt": (
@@ -253,7 +254,50 @@ class ModelGuardTest(unittest.TestCase):
         }
 
         self.assert_strict_allow(
-            self.run_guard(allowed, plugin_root=plugin_root)
+            self.run_guard(
+                allowed,
+                data_root=data_root,
+                plugin_root=plugin_root,
+            )
+        )
+        worker = {
+            "agent_type": "ecc-vsdd:vsdd-pr-worker",
+            "agent_id": "pr-worker-1",
+            "session_id": allowed["session_id"],
+            "cwd": allowed["cwd"],
+            "effort": {"level": "medium"},
+            "tool_name": "Bash",
+            "tool_input": {"command": "gh pr create --fill"},
+        }
+        self.assert_strict_allow(
+            self.run_global_guard(
+                worker,
+                data_root=data_root,
+                plugin_root=plugin_root,
+            )
+        )
+
+        (plugin_root / "scripts" / "vsdd-runtime-state.py").write_text(
+            "import sys\nprint('stale review evidence', file=sys.stderr)\nsys.exit(1)\n",
+            encoding="utf-8",
+        )
+        stale = self.run_global_guard(
+            worker,
+            data_root=data_root,
+            plugin_root=plugin_root,
+        )
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("PR worker preflight failed", stale.stderr)
+
+        ended = self.run_guard(
+            allowed,
+            "--session-end",
+            data_root=data_root,
+            plugin_root=plugin_root,
+        )
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertEqual(
+            list(Path(data_root).rglob("orchestrator-session.json")), []
         )
 
     def test_orchestrator_allows_detached_launcher_poll_protocol(self) -> None:
@@ -376,6 +420,35 @@ class ModelGuardTest(unittest.TestCase):
         self.assert_strict_allow(
             self.run_global_guard(worker, data_root=data_root)
         )
+
+    @unittest.skipIf(os.name == "nt", "symlink semantics differ on Windows")
+    def test_symlinked_authorization_record_is_not_trusted(self) -> None:
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-symlink-record-")
+        orchestrator = self.orchestrator_launch()
+        orchestrator["session_id"] = "symlinked-session"
+        self.assert_strict_allow(
+            self.run_guard(orchestrator, data_root=data_root)
+        )
+        record = next(Path(data_root).rglob("symlinked-session.json"))
+        replacement = record.with_name("replacement.json")
+        replacement.write_text(record.read_text(encoding="utf-8"), encoding="utf-8")
+        replacement.chmod(0o600)
+        record.unlink()
+        record.symlink_to(replacement)
+        worker = {
+            "agent_type": "ecc-vsdd:vsdd-status-worker",
+            "agent_id": "subagent-1",
+            "session_id": "symlinked-session",
+            "cwd": str(ROOT),
+            "effort": {"level": "low"},
+            "tool_name": "Read",
+            "tool_input": {},
+        }
+
+        result = self.run_global_guard(worker, data_root=data_root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_authorization_is_bound_to_the_orchestrator_cwd(self) -> None:
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-cwd-bound-")

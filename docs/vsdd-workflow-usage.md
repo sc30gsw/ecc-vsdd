@@ -69,7 +69,7 @@ StartのHaiku処理は2段階です。最初は明示的な`operation: bootstrap
 | `--base <ref>` | detected repository default | `origin/HEAD`等から検出するintegration branchのcleanな起点。曖昧なら明示が必要 |
 | `--until review\|pr` | `review` | 独立reviewまで、またはpush/PR作成まで |
 
-`--until pr`は外部変更の明示的な許可です。失敗したgateを無視する許可ではありません。PR worker起動前にもstrict hookがcontext envelopeとruntime PR preflightを実行し、この許可と現行review証跡がなければpush/PR操作を開始できません。
+`--until pr`は外部変更の明示的な許可です。失敗したgateを無視する許可ではありません。PR worker起動前と各Bash直前にstrict/global hookがsession-bound認可とruntime PR preflightを実行し、この許可と現行review証跡がなければpush/PR操作を開始できません。
 
 要求したReviewまたはPR境界では、成果物snapshotに加えてruntime terminal gateが`status: COMPLETE`と`reached`を保存します。ReviewからPRへ延長するときだけ、明示`--until pr`を`extend` gateが記録し、runをPhase 9へ再オープンします。
 

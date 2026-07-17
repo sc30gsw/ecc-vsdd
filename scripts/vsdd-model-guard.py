@@ -128,6 +128,38 @@ def write_private_json(path: Path, record: dict) -> None:
             pass
 
 
+def read_private_json(path: Path) -> dict | None:
+    root = guard_runtime_root()
+    try:
+        path.relative_to(root)
+        ensure_private_directory(root)
+        ensure_private_directory(path.parent)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except (ValueError, FileNotFoundError, OSError):
+        return None
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            return None
+        if os.name != "nt":
+            if hasattr(os, "getuid") and details.st_uid != os.getuid():
+                return None
+            if stat.S_IMODE(details.st_mode) & 0o077 or details.st_nlink != 1:
+                return None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            descriptor = -1
+            value = json.load(stream)
+    except (json.JSONDecodeError, OSError):
+        return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return value if isinstance(value, dict) else None
+
+
 def safe_session_id(session_id: object) -> str:
     return re.sub(r"[^a-zA-Z0-9-]", "", str(session_id or ""))
 
@@ -144,6 +176,13 @@ def authorization_record_path(session_id: object) -> Path | None:
     if not safe_id:
         return None
     return guard_runtime_root() / "authorized-sessions" / f"{safe_id}.json"
+
+
+def pr_authorization_record_path(session_id: object) -> Path | None:
+    safe_id = safe_session_id(session_id)
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "pr-authorized-sessions" / f"{safe_id}.json"
 
 
 def authorize_strict_session(payload: dict) -> None:
@@ -171,11 +210,10 @@ def strict_session_authorized(payload: dict) -> bool:
     if not payload.get("agent_id"):
         return False
     path = authorization_record_path(payload.get("session_id"))
-    if path is None or not path.is_file():
+    if path is None:
         return False
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    record = read_private_json(path)
+    if record is None:
         return False
     created_at = record.get("created_at")
     age = time.time() - created_at if isinstance(created_at, int) else -1
@@ -190,7 +228,11 @@ def strict_session_authorized(payload: dict) -> bool:
 
 
 def clear_session_state(payload: dict) -> None:
-    for resolver in (authorization_record_path, session_record_path):
+    for resolver in (
+        authorization_record_path,
+        pr_authorization_record_path,
+        session_record_path,
+    ):
         path = resolver(payload.get("session_id"))
         if path is None:
             continue
@@ -268,12 +310,13 @@ def record_session_model(payload: dict) -> None:
 
 def check_recorded_model(payload: dict, agent_type: str) -> None:
     path = session_record_path(payload.get("session_id"))
-    if path is None or not path.is_file():
+    if path is None:
         return
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as error:
-        deny(f"cannot verify session model: {error}")
+    record = read_private_json(path)
+    if record is None:
+        if not path.exists() and not path.is_symlink():
+            return
+        deny("cannot verify the private session model record")
     model = str(record.get("model") or "").lower()
     if not model:
         return
@@ -357,7 +400,7 @@ def run_context_fields(prompt: object) -> dict[str, str]:
     return fields
 
 
-def check_pr_launch(tool_input: dict) -> None:
+def check_pr_launch(payload: dict, tool_input: dict) -> None:
     """Require persisted PR consent and current review gates before agent launch."""
     fields = run_context_fields(tool_input.get("prompt"))
     slug = fields.get("slug", "")
@@ -380,6 +423,11 @@ def check_pr_launch(tool_input: dict) -> None:
     if not state_path.is_absolute() or state_path.resolve() != expected_state:
         deny("PR worker launch run_state does not match its slug and worktree")
 
+    run_pr_preflight(worktree, slug)
+    authorize_pr_session(payload, worktree, slug)
+
+
+def run_pr_preflight(worktree: Path, slug: str) -> None:
     runtime = (
         Path(os.environ.get("CLAUDE_PLUGIN_ROOT", ""))
         / "scripts"
@@ -411,7 +459,52 @@ def check_pr_launch(tool_input: dict) -> None:
         evidence = {}
     if result.returncode or evidence != {"status": "READY", "phase": "pr"}:
         detail = (result.stderr or result.stdout or "runtime rejected PR launch").strip()
-        deny(f"PR worker launch preflight failed: {detail[:500]}")
+        deny(f"PR worker preflight failed: {detail[:500]}")
+
+
+def authorize_pr_session(payload: dict, worktree: Path, slug: str) -> None:
+    path = pr_authorization_record_path(payload.get("session_id"))
+    cwd = normalized_cwd(payload)
+    if path is None or cwd is None:
+        deny("cannot persist PR worker launch authorization")
+    try:
+        write_private_json(
+            path,
+            {
+                "schema_version": 1,
+                "authorization": "vsdd-pr",
+                "session_id": safe_session_id(payload.get("session_id")),
+                "cwd": cwd,
+                "slug": slug,
+                "integration_worktree": str(worktree),
+                "created_at": int(time.time()),
+            },
+        )
+    except OSError as error:
+        deny(f"cannot persist PR worker launch authorization: {error}")
+
+
+def check_pr_worker_tool(payload: dict) -> None:
+    path = pr_authorization_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    if record is None or not payload.get("agent_id"):
+        deny("PR worker tool use lacks a session-bound launch authorization")
+    created_at = record.get("created_at")
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    slug = str(record.get("slug") or "")
+    if not (
+        record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-pr"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and SLUG_RE.fullmatch(slug)
+        and 0 <= age <= AUTHORIZATION_TTL_SECONDS
+    ):
+        deny("PR worker launch authorization is invalid or expired")
+    worktree = Path(str(record.get("integration_worktree") or ""))
+    if not worktree.is_absolute() or not worktree.is_dir():
+        deny("PR worker launch authorization has no valid integration worktree")
+    run_pr_preflight(worktree.resolve(), slug)
 
 
 def check_launcher(command: object) -> None:
@@ -520,6 +613,8 @@ def main() -> None:
             allow_unobservable=agent_type
             != "ecc-vsdd:vsdd-implementation-driver",
         )
+        if agent_type == "ecc-vsdd:vsdd-pr-worker" and tool_name == "Bash":
+            check_pr_worker_tool(payload)
         allow_validated_tool(strict or strict_session_authorized(payload))
         return
 
@@ -569,7 +664,7 @@ def main() -> None:
             deny(f"Fable cannot launch unpinned agent {requested!r}")
         check_pinned_agent_definition(requested)
         if requested == "ecc-vsdd:vsdd-pr-worker":
-            check_pr_launch(tool_input)
+            check_pr_launch(payload, tool_input)
 
     if strict:
         authorize_strict_session(payload)
