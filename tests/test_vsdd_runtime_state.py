@@ -643,9 +643,8 @@ class RuntimeStateTest(unittest.TestCase):
             "---\nname: vsdd-status-worker\n"
             "hooks:\n  PreToolUse:\n"
             "    - hooks:\n"
-            "        - args:\n"
-            "            - /plugin/scripts/vsdd-model-guard.py\n"
-            '            - "--project-agent"\n'
+            "        - type: command\n"
+            '          command: "python3 /plugin/scripts/vsdd-model-guard.py --project-agent"\n'
             "---\n"
             f"{runtime.PROJECT_AGENT_MARKER}\n",
             encoding="utf-8",

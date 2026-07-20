@@ -2,12 +2,13 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
-## [1.0.0-rc.7] - 2026-07-17
+## [1.0.0-rc.8] - 2026-07-17
 
 ### Fixed
 
 - Claude Codeがproject agent registryを`UserPromptSubmit`より前に固定するため、初回の同一sessionでは一時生成workerが見つからない問題。親Fableをprompt-bound relayで1回だけchild sessionへ引き継ぎ、生成済みworkerをstartup時から登録した状態で同じVSDDコマンドを無人続行。childはdetachし、親は45秒単位でpollするため長時間runを単一Bash呼出しへ束縛しない。
 - project agent frontmatter hookを公式schemaどおり単一の`command`文字列として生成し、`dontAsk`でも検証済みのWrite/Edit/Bashを明示許可できるよう修正。
+- bootstrapのclean checkout判定も同じ単一`command`形式を認識するよう同期し、生成proxyだけを安全に除外。
 
 ## [1.0.0-rc.5] - 2026-07-17
 

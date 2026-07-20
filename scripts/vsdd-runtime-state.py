@@ -223,7 +223,8 @@ def is_generated_project_agent_status(repo: Path, status_line: str) -> bool:
             f"name: {expected_name}",
             "hooks:\n  PreToolUse:",
             "vsdd-model-guard.py",
-            '            - "--project-agent"',
+            '          command: "python3 ',
+            "--project-agent",
         )
     )
 
