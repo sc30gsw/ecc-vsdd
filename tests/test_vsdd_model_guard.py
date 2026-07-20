@@ -1264,7 +1264,8 @@ class ModelGuardTest(unittest.TestCase):
             with self.subTest(agent=path.name):
                 self.assertIn(guard.PROJECT_AGENT_MARKER, content)
                 self.assertIn(str(SCRIPT), content)
-                self.assertIn('            - "--project-agent"', content)
+                self.assertIn("--project-agent", content)
+                self.assertNotIn("          args:\n", content)
                 self.assertIn("hooks:\n  PreToolUse:", content)
 
         ended = self.run_guard(

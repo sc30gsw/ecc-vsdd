@@ -451,16 +451,14 @@ def rendered_project_agent(agent_type: str) -> str:
     if len(parts) != 3 or parts[0].strip() or "\nhooks:" in parts[1]:
         deny(f"project agent template has unsupported frontmatter: {source}")
     guard_script = installed_plugin_root() / "scripts" / "vsdd-model-guard.py"
+    guard_command = shlex.join(["python3", str(guard_script), "--project-agent"])
     hook = (
         "\nhooks:\n"
         "  PreToolUse:\n"
         "    - matcher: \"\"\n"
         "      hooks:\n"
         "        - type: command\n"
-        "          command: python3\n"
-        "          args:\n"
-        f"            - {json.dumps(str(guard_script))}\n"
-        "            - \"--project-agent\"\n"
+        f"          command: {json.dumps(guard_command)}\n"
     )
     return f"---{parts[1].rstrip()}{hook}---{parts[2].rstrip()}\n\n{PROJECT_AGENT_MARKER}\n"
 
@@ -668,7 +666,7 @@ def check_materialized_project_agent(
         or entry.get("sha256") != actual_hash
         or str(installed_plugin_root() / "scripts" / "vsdd-model-guard.py")
         not in content
-        or '            - "--project-agent"' not in content
+        or "--project-agent" not in content
     ):
         deny(f"materialized project agent was modified: {expected_name}")
 
