@@ -2,7 +2,7 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
-## [1.0.0-rc.2] - 2026-07-17
+## [1.0.0-rc.3] - 2026-07-17
 
 ### Added
 
@@ -30,10 +30,12 @@
 - `tasks.md`と`progress.md`のTASK欠落を完了扱いする問題。
 - stale review attempt、別commitのreview、未統合TASK commit、偽のPR完了メッセージを受理する問題。
 - top-level Fable sessionがCLI既定の`medium` effortで起動し、control-plane preflightで停止する問題。起動例と契約で`--effort high`を必須化。
+- plugin-level hookがsubagent内部のtool callには継承されず、`dontAsk`無人実行でworkerのWrite/Bashが拒否される問題。全worker agent frontmatterへ同じPreToolUse guardを同梱。
+- subagentのBash環境に`CLAUDE_PLUGIN_ROOT`が継承されず、workerがplugin install先を探索する問題。`SubagentStart`でruntime/launcher/brokerのliteral pathを注入。
 
 ### Security
 
-- guardが観測できる直接commandと一般的なshell/interpreter wrapperで、全workerの`git push`、`git send-pack`、GitHub mutation commandを拒否し、PR brokerを唯一の対応経路に変更。
+- worker agent frontmatterのPreToolUse guardが、観測できる直接commandと一般的なshell/interpreter wrapperで全workerの`git push`、`git send-pack`、GitHub mutation commandを拒否し、PR brokerを唯一の対応経路に変更。
 - private runtime recordをowner/mode/regular-file/link-countで検証し、symlink・hard link・FIFO・unsafe modeをfail-closedで拒否。
 - record作成を`O_EXCL`/`O_NOFOLLOW`、期限切れ状態をSessionStart sweep、PR同意をone-shot消費に変更。
 

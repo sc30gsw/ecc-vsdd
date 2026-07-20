@@ -5,6 +5,14 @@ tools: Read, Grep, Glob, Bash, Write, Edit, Skill
 model: opus
 effort: xhigh
 maxTurns: 80
+hooks:
+  PreToolUse:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: python3
+          args:
+            - "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py"
 skills:
   - ecc-vsdd:vsdd-design
 ---

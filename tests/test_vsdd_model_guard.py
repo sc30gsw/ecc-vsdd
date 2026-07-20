@@ -233,7 +233,6 @@ class ModelGuardTest(unittest.TestCase):
 
         payload = {
             "agent_type": "ecc-vsdd:vsdd-code-reviewer",
-            "agent_id": "subagent-1",
             "session_id": "shared-parent-session",
             "cwd": str(ROOT),
             "effort": {"level": "xhigh"},
@@ -696,7 +695,7 @@ class ModelGuardTest(unittest.TestCase):
         self.assertEqual(record["capability"], capability)
         self.assertEqual(record["prompt_id"], launch["prompt_id"])
 
-    def test_pr_worker_rejects_different_agent_id_or_expired_authorization(self) -> None:
+    def test_pr_worker_rejects_unbound_or_expired_authorization(self) -> None:
         plugin_root, worktree, run_state = self.make_pr_gate_fixture()
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-pr-agent-reject-")
         launch = self.pr_launch_payload(worktree, run_state)
@@ -730,7 +729,6 @@ class ModelGuardTest(unittest.TestCase):
         )
         worker = {
             "agent_type": "ecc-vsdd:vsdd-pr-worker",
-            "agent_id": "different-pr-worker",
             "session_id": launch["session_id"],
             "prompt_id": launch["prompt_id"],
             "cwd": launch["cwd"],
@@ -739,15 +737,26 @@ class ModelGuardTest(unittest.TestCase):
             "tool_input": {"command": "git status --short"},
         }
 
-        wrong_agent = self.run_global_guard(
+        record_path = next(
+            path
+            for path in Path(data_root).rglob(f"{launch['session_id']}.json")
+            if path.parent.name == "pr-authorized-sessions"
+        )
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["agent_id"] = None
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        record_path.chmod(0o600)
+        unbound = self.run_global_guard(
             worker,
             data_root=data_root,
             plugin_root=plugin_root,
         )
-        self.assertEqual(wrong_agent.returncode, 2)
-        self.assertIn("actual PR worker", wrong_agent.stderr)
+        self.assertEqual(unbound.returncode, 2)
+        self.assertIn("invalid or expired", unbound.stderr)
 
-        worker["agent_id"] = "bound-pr-worker"
+        record["agent_id"] = "bound-pr-worker"
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        record_path.chmod(0o600)
         worker["cwd"] = str(ROOT.parent)
         wrong_cwd = self.run_global_guard(
             worker,
@@ -758,11 +767,6 @@ class ModelGuardTest(unittest.TestCase):
         self.assertIn("invalid or expired", wrong_cwd.stderr)
         worker["cwd"] = launch["cwd"]
 
-        record_path = next(
-            path
-            for path in Path(data_root).rglob(f"{launch['session_id']}.json")
-            if path.parent.name == "pr-authorized-sessions"
-        )
         record = json.loads(record_path.read_text(encoding="utf-8"))
         record["created_at"] = 1
         record_path.write_text(json.dumps(record), encoding="utf-8")
@@ -818,7 +822,6 @@ class ModelGuardTest(unittest.TestCase):
         )
         pr_worker = {
             "agent_type": "ecc-vsdd:vsdd-pr-worker",
-            "agent_id": "bound-pr-worker",
             "session_id": launch["session_id"],
             "prompt_id": launch["prompt_id"],
             "cwd": launch["cwd"],
@@ -958,7 +961,6 @@ class ModelGuardTest(unittest.TestCase):
         )
         worker = {
             "agent_type": "ecc-vsdd:vsdd-pr-worker",
-            "agent_id": "pr-worker-1",
             "session_id": allowed["session_id"],
             "prompt_id": allowed["prompt_id"],
             "cwd": allowed["cwd"],
@@ -1155,7 +1157,7 @@ class ModelGuardTest(unittest.TestCase):
         self.assertEqual(prompt_args[-1], "--user-prompt-submit")
         self.assertEqual(session_args[-1], "--session-start")
         self.assertEqual(len(global_args), 1)
-        self.assertEqual(subagent["matcher"], "ecc-vsdd:vsdd-pr-worker")
+        self.assertNotIn("matcher", subagent)
         self.assertEqual(subagent["hooks"][0]["args"][-1], "--subagent-start")
         self.assertEqual(end_args[-1], "--session-end")
         self.assertNotIn("CLAUDE_PLUGIN_DATA", json.dumps(hooks))
@@ -1163,6 +1165,73 @@ class ModelGuardTest(unittest.TestCase):
         skill = (ROOT / "skills" / "vsdd-run" / "SKILL.md").read_text()
         self.assertNotIn("CLAUDE_PLUGIN_DATA", skill)
         self.assertNotIn("--data-root", skill)
+
+    def test_every_worker_defines_its_own_pretooluse_guard(self) -> None:
+        expected = (
+            "hooks:\n"
+            "  PreToolUse:\n"
+            "    - matcher: \"\"\n"
+            "      hooks:\n"
+            "        - type: command\n"
+            "          command: python3\n"
+            "          args:\n"
+            "            - \"${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py\""
+        )
+        worker_names = guard.WORKERS
+
+        for worker_name in worker_names:
+            path = ROOT / "agents" / f"{worker_name.split(':', 1)[1]}.md"
+            frontmatter = path.read_text(encoding="utf-8").split("---", 2)[1]
+            with self.subTest(worker=worker_name):
+                self.assertIn(expected, frontmatter)
+
+    def test_subagent_start_injects_literal_plugin_root_for_every_worker(self) -> None:
+        payload = {
+            "session_id": "shared-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(ROOT),
+            "hook_event_name": "SubagentStart",
+            "agent_type": "ecc-vsdd:vsdd-steering-worker",
+            "agent_id": "steering-worker-1",
+        }
+
+        result = self.run_guard(payload, "--subagent-start")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertIn(f"VSDD_PLUGIN_ROOT: {ROOT}", context)
+        self.assertIn(
+            f"VSDD_RUNTIME_STATE: {ROOT / 'scripts' / 'vsdd-runtime-state.py'}",
+            context,
+        )
+
+    def test_subagent_start_rejects_empty_plugin_root(self) -> None:
+        payload = {
+            "session_id": "shared-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(ROOT),
+            "hook_event_name": "SubagentStart",
+            "agent_type": "ecc-vsdd:vsdd-steering-worker",
+            "agent_id": "steering-worker-1",
+        }
+
+        result = self.run_guard(
+            payload,
+            "--subagent-start",
+            CLAUDE_PLUGIN_ROOT="",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot resolve the installed plugin root", result.stderr)
+
+    def test_pr_preflight_rejects_empty_plugin_root_before_execution(self) -> None:
+        with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": ""}):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "2",
+            ):
+                guard.run_pr_preflight(ROOT, "sample")
 
     def test_pr_worker_contract_requires_the_bundled_broker(self) -> None:
         agent = (ROOT / "agents" / "vsdd-pr-worker.md").read_text(encoding="utf-8")
@@ -1179,7 +1248,6 @@ class ModelGuardTest(unittest.TestCase):
     def test_non_strict_global_hook_does_not_auto_approve_worker_tools(self) -> None:
         payload = {
             "agent_type": "ecc-vsdd:vsdd-status-worker",
-            "agent_id": "subagent-1",
             "session_id": "shared-parent-session",
             "effort": {"level": "low"},
             "tool_name": "Bash",
@@ -1202,7 +1270,6 @@ class ModelGuardTest(unittest.TestCase):
         )
         worker = {
             "agent_type": "ecc-vsdd:vsdd-status-worker",
-            "agent_id": "subagent-1",
             "session_id": "shared-authorized-session",
             "cwd": str(ROOT),
             "effort": {"level": "low"},

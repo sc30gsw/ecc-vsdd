@@ -45,7 +45,6 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "ecc-vsdd:vsdd-pr-worker",
         "hooks": [
           {
             "type": "command",

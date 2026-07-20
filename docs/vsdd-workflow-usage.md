@@ -92,7 +92,7 @@ Steering(Opus xhigh, stale時のみ)
   → PR(Sonnet medium)
 ```
 
-Fableは次phaseを選び、workerを起動し、固定`verdict`を確認するだけです。Skill hookがFableのWrite/Edit、任意Bash、未固定agent起動、per-invocation model overrideを拒否します。混在モデルのorchestrator sessionではglobal `CLAUDE_CODE_SUBAGENT_MODEL`も固定値にできません。
+Fableは次phaseを選び、workerを起動し、固定`verdict`を確認するだけです。Skill hookがFableのWrite/Edit、任意Bash、未固定agent起動、per-invocation model overrideを拒否します。全workerのagent frontmatterにはsubagent内で有効なPreToolUse guardが同梱され、検証済みorchestrator sessionからのworkerだけを自動許可します。`SubagentStart`は実インストール先のruntime/launcher/brokerのliteral pathも注入するため、workerのBash環境変数やfilesystem探索には依存しません。混在モデルのorchestrator sessionではglobal `CLAUDE_CODE_SUBAGENT_MODEL`も固定値にできません。
 
 全workerは無人実行contextを受け取るため、Requirementsの7項目を含むphase内質問や`CONFIRM`で停止しません。保存済みソースから安全に決められない製品・データ損失・security・compatibility・破壊的操作・外部権限の判断だけが`BLOCKED`になります。
 

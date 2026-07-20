@@ -5,6 +5,14 @@ tools: Read, Grep, Glob, Bash, Write, Edit, mcp__claude_ai_Notion__notion-fetch
 model: haiku
 effort: low
 maxTurns: 40
+hooks:
+  PreToolUse:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: python3
+          args:
+            - "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py"
 skills:
   - ecc-vsdd:vsdd-init
 ---

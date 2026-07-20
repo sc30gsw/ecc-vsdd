@@ -162,6 +162,16 @@ def deny(message: str) -> None:
     raise SystemExit(2)
 
 
+def installed_plugin_root() -> Path:
+    raw_plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").strip()
+    if not raw_plugin_root:
+        deny("cannot resolve the installed plugin root")
+    plugin_root = Path(raw_plugin_root).resolve()
+    if not plugin_root.is_dir():
+        deny("cannot resolve the installed plugin root")
+    return plugin_root
+
+
 def allow_validated_tool(authorized: bool) -> None:
     """Skip prompts only for a validated strict or orchestrator-authorized call."""
     if not authorized:
@@ -452,8 +462,6 @@ def authorize_strict_session(payload: dict) -> None:
 
 
 def strict_session_authorized(payload: dict) -> bool:
-    if not payload.get("agent_id"):
-        return False
     path = authorization_record_path(payload.get("session_id"))
     if path is None:
         return False
@@ -606,7 +614,7 @@ def check_recorded_model(payload: dict, agent_type: str) -> None:
 
 
 def agent_definition_path(agent_type: str) -> Path:
-    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    plugin_root = installed_plugin_root()
     name = agent_type.split(":", 1)[-1]
     return plugin_root / "agents" / f"{name}.md"
 
@@ -709,11 +717,7 @@ def check_pr_launch(payload: dict, tool_input: dict) -> None:
 
 
 def run_pr_preflight(worktree: Path, slug: str) -> None:
-    runtime = (
-        Path(os.environ.get("CLAUDE_PLUGIN_ROOT", ""))
-        / "scripts"
-        / "vsdd-runtime-state.py"
-    ).resolve()
+    runtime = (installed_plugin_root() / "scripts" / "vsdd-runtime-state.py").resolve()
     try:
         result = subprocess.run(
             [
@@ -789,8 +793,30 @@ def authorize_pr_session(payload: dict, worktree: Path, slug: str) -> None:
         deny(f"cannot persist PR worker launch authorization: {error}")
 
 
-def bind_pr_subagent(payload: dict) -> None:
-    if normalized_agent(payload.get("agent_type")) != "ecc-vsdd:vsdd-pr-worker":
+def bind_subagent(payload: dict) -> None:
+    agent_type = normalized_agent(payload.get("agent_type"))
+    if agent_type not in WORKERS:
+        return
+    plugin_root = installed_plugin_root()
+    context = [
+        "Use these injected literal paths. Do not search the filesystem for the "
+        "plugin or depend on CLAUDE_PLUGIN_ROOT being present in Bash.",
+        f"VSDD_PLUGIN_ROOT: {plugin_root}",
+        f"VSDD_RUNTIME_STATE: {plugin_root / 'scripts' / 'vsdd-runtime-state.py'}",
+        f"VSDD_WORKER_LAUNCHER: {plugin_root / 'scripts' / 'vsdd-launch-worker.py'}",
+        f"VSDD_PR_ACTION_BROKER: {plugin_root / 'scripts' / 'vsdd-pr-action.py'}",
+    ]
+    if agent_type != "ecc-vsdd:vsdd-pr-worker":
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "SubagentStart",
+                        "additionalContext": "\n".join(context),
+                    }
+                }
+            )
+        )
         return
     path = pr_authorization_record_path(payload.get("session_id"))
     record = read_private_json(path) if path is not None else None
@@ -815,18 +841,20 @@ def bind_pr_subagent(payload: dict) -> None:
         write_private_json(path, record)
     except OSError as error:
         deny(f"cannot bind the actual PR worker: {error}")
+    context.extend(
+        [
+            "Use only the bundled VSDD PR action broker for push and PR creation.",
+            f"VSDD_PR_ACTION_CAPABILITY: {capability}",
+            f"VSDD_PR_ACTION_SESSION_ID: {record['session_id']}",
+            f"VSDD_PR_ACTION_AGENT_ID: {agent_id}",
+        ]
+    )
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "SubagentStart",
-                    "additionalContext": (
-                        "Use only the bundled VSDD PR action broker for push and PR "
-                        "creation.\n"
-                        f"VSDD_PR_ACTION_CAPABILITY: {capability}\n"
-                        f"VSDD_PR_ACTION_SESSION_ID: {record['session_id']}\n"
-                        f"VSDD_PR_ACTION_AGENT_ID: {agent_id}"
-                    ),
+                    "additionalContext": "\n".join(context),
                 }
             }
         )
@@ -836,7 +864,7 @@ def bind_pr_subagent(payload: dict) -> None:
 def check_pr_worker_tool(payload: dict) -> dict:
     path = pr_authorization_record_path(payload.get("session_id"))
     record = read_private_json(path) if path is not None else None
-    if record is None or not payload.get("agent_id"):
+    if record is None:
         deny("PR worker tool use lacks a session-bound launch authorization")
     created_at = record.get("created_at")
     age = time.time() - created_at if isinstance(created_at, int) else -1
@@ -847,12 +875,11 @@ def check_pr_worker_tool(payload: dict) -> dict:
         and record.get("session_id") == safe_session_id(payload.get("session_id"))
         and record.get("cwd") == normalized_cwd(payload)
         and record.get("prompt_id") == str(payload.get("prompt_id") or "")
+        and bool(record.get("agent_id"))
         and SLUG_RE.fullmatch(slug)
         and 0 <= age <= AUTHORIZATION_TTL_SECONDS
     ):
         deny("PR worker launch authorization is invalid or expired")
-    if record.get("agent_id") != str(payload.get("agent_id") or ""):
-        deny("PR worker tool use is not from the actual PR worker")
     if not re.fullmatch(
         r"[A-Za-z0-9_-]{32,128}", str(record.get("capability") or "")
     ):
@@ -1115,7 +1142,7 @@ def pr_broker_invocation(command: object) -> dict[str, str] | None:
         deny(f"cannot parse VSDD PR action broker invocation: {error}")
     if any(token and all(char in ";&|(){}" for char in token) for token in argv):
         deny("VSDD PR action broker invocation cannot use shell control operators")
-    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    plugin_root = installed_plugin_root()
     broker = (plugin_root / "scripts" / "vsdd-pr-action.py").resolve()
     placeholder = "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-pr-action.py"
     if (
@@ -1165,7 +1192,7 @@ def pr_broker_invocation(command: object) -> dict[str, str] | None:
 def check_pr_broker_context(payload: dict, fields: dict[str, str], record: dict) -> None:
     expected = {
         "--session-id": safe_session_id(payload.get("session_id")),
-        "--agent-id": str(payload.get("agent_id") or ""),
+        "--agent-id": str(record.get("agent_id") or ""),
         "--capability": str(record.get("capability") or ""),
         "--slug": str(record.get("slug") or ""),
         "--worktree": str(record.get("integration_worktree") or ""),
@@ -1186,7 +1213,7 @@ def check_pr_broker_context(payload: dict, fields: dict[str, str], record: dict)
 def pr_boundary_operation(command: object, *, depth: int = 0) -> str | None:
     if depth > 4:
         return None
-    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    plugin_root = installed_plugin_root()
     runtime = (plugin_root / "scripts" / "vsdd-runtime-state.py").resolve()
     placeholder = "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py"
     for segment in shell_segments(command):
@@ -1243,7 +1270,7 @@ def check_launcher(command: object) -> None:
     except ValueError as error:
         deny(f"cannot parse Bash command: {error}")
 
-    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")).resolve()
+    plugin_root = installed_plugin_root()
     launcher = (plugin_root / "scripts" / "vsdd-launch-worker.py").resolve()
     placeholder_launcher = "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-launch-worker.py"
     if len(argv) < 2 or Path(argv[0]).name not in {"python", "python3"}:
@@ -1333,7 +1360,7 @@ def main() -> None:
         handle_user_prompt(payload)
         return
     if subagent_start:
-        bind_pr_subagent(payload)
+        bind_subagent(payload)
         return
 
     agent_type = normalized_agent(payload.get("agent_type"))
@@ -1346,7 +1373,7 @@ def main() -> None:
         # Applying the parent's SessionStart model would reject every correctly
         # pinned mixed-model worker. Separate main-agent sessions still have a
         # model-bearing SessionStart record and remain verifiable here.
-        if not payload.get("agent_id"):
+        if agent_type == "ecc-vsdd:vsdd-implementation-driver":
             check_recorded_model(payload, agent_type)
         check_effort(
             payload,
