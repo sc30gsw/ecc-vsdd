@@ -1399,6 +1399,10 @@ class ModelGuardTest(unittest.TestCase):
             child_command = launched.call_args.args[0]
             self.assertIn("ecc-vsdd:vsdd-orchestrator", child_command)
             self.assertIn("dontAsk", child_command)
+            self.assertEqual(
+                child_command[child_command.index("--add-dir") + 1],
+                str(guard.MANAGED_WORKTREE_ROOT.resolve()),
+            )
 
             with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch(
                 "pathlib.Path.cwd", return_value=project

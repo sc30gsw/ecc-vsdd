@@ -66,6 +66,7 @@ PR_CONSENT_TTL_SECONDS = 24 * 60 * 60
 ORCHESTRATOR_RELAY_TTL_SECONDS = 60 * 60
 PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
 PROJECT_AGENTS_READY_ENV = "ECC_VSDD_PROJECT_AGENTS_READY"
+MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
 VSDD_ENTRY_POINTS = {
     "vsdd-run",
     "vsdd-steering",
@@ -1159,10 +1160,13 @@ def supervise_orchestrator_relay(arguments: list[str]) -> None:
         return
     env = os.environ.copy()
     env[PROJECT_AGENTS_READY_ENV] = "1"
+    ensure_private_directory(MANAGED_WORKTREE_ROOT)
     command = [
         claude,
         "-p",
         prompt,
+        "--add-dir",
+        str(MANAGED_WORKTREE_ROOT.resolve()),
         "--agent",
         "ecc-vsdd:vsdd-orchestrator",
         "--effort",
