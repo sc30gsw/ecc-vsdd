@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -62,7 +63,9 @@ PROJECT_WORKER_NAMES = {
 ORCHESTRATOR_SKILLS = {"ecc-vsdd:vsdd-run", "vsdd-run"}
 AUTHORIZATION_TTL_SECONDS = 7 * 24 * 60 * 60
 PR_CONSENT_TTL_SECONDS = 24 * 60 * 60
+ORCHESTRATOR_RELAY_TTL_SECONDS = 60 * 60
 PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
+PROJECT_AGENTS_READY_ENV = "ECC_VSDD_PROJECT_AGENTS_READY"
 VSDD_ENTRY_POINTS = {
     "vsdd-run",
     "vsdd-steering",
@@ -350,6 +353,13 @@ def materialized_agents_record_path(session_id: object) -> Path | None:
     if not safe_id:
         return None
     return guard_runtime_root() / "materialized-agent-sessions" / f"{safe_id}.json"
+
+
+def orchestrator_relay_record_path(session_id: object) -> Path | None:
+    safe_id = safe_session_id(session_id)
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "orchestrator-relay-sessions" / f"{safe_id}.json"
 
 
 def remove_private_record(path: Path | None) -> None:
@@ -696,12 +706,147 @@ def cleanup_materialized_agents(payload: dict) -> None:
                 pass
 
 
+def relay_command(record: dict, action: str) -> str:
+    command = [
+        "python3",
+        str(installed_plugin_root() / "scripts" / "vsdd-model-guard.py"),
+        action,
+        "--session-id",
+        str(record["session_id"]),
+        "--prompt-id",
+        str(record["prompt_id"]),
+        "--capability",
+        str(record["capability"]),
+    ]
+    if action == "--relay-wait":
+        command.extend(["--wait-seconds", "45"])
+    return shlex.join(command)
+
+
+def create_orchestrator_relay(payload: dict) -> tuple[str, str]:
+    path = orchestrator_relay_record_path(payload.get("session_id"))
+    cwd = normalized_cwd(payload)
+    prompt_id = str(payload.get("prompt_id") or "")
+    prompt = str(payload.get("prompt") or "")
+    if path is None or cwd is None or not PROMPT_ID_RE.fullmatch(prompt_id):
+        deny("orchestrator relay requires session_id, cwd, and prompt_id")
+    capability = secrets.token_urlsafe(32)
+    record = {
+        "schema_version": 1,
+        "authorization": "vsdd-orchestrator-relay",
+        "session_id": safe_session_id(payload.get("session_id")),
+        "cwd": cwd,
+        "prompt_id": prompt_id,
+        "prompt": prompt,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "capability": capability,
+        "created_at": int(time.time()),
+        "status": "READY",
+    }
+    start_command = relay_command(record, "--relay-start")
+    wait_command = relay_command(record, "--relay-wait")
+    record["start_command"] = start_command
+    record["wait_command"] = wait_command
+    try:
+        write_private_json(path, record)
+    except OSError as error:
+        deny(f"cannot persist orchestrator relay authorization: {error}")
+    return start_command, wait_command
+
+
+def current_orchestrator_relay(payload: dict) -> tuple[Path, dict] | None:
+    path = orchestrator_relay_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    if record is None or path is None:
+        return None
+    created_at = record.get("created_at")
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    if not (
+        record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-orchestrator-relay"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and record.get("prompt_id") == str(payload.get("prompt_id") or "")
+        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", str(record.get("capability") or ""))
+        and record.get("status") in {"READY", "RUNNING", "COMPLETE", "BLOCKED"}
+        and 0 <= age <= ORCHESTRATOR_RELAY_TTL_SECONDS
+    ):
+        deny("orchestrator relay authorization is invalid or expired")
+    return path, record
+
+
+def relay_invocation(command: object) -> dict[str, str] | None:
+    raw_command = str(command or "")
+    if any(character in raw_command for character in "\r\n;|&<>{}*?[]~"):
+        return None
+    if "$(" in raw_command or "`" in raw_command:
+        return None
+    try:
+        argv = shlex.split(raw_command)
+    except ValueError:
+        return None
+    if len(argv) not in {9, 11} or Path(argv[0]).name not in {"python", "python3"}:
+        return None
+    guard_script = (installed_plugin_root() / "scripts" / "vsdd-model-guard.py").resolve()
+    if Path(argv[1]).resolve() != guard_script or argv[2] not in {
+        "--relay-start",
+        "--relay-wait",
+    }:
+        return None
+    if argv[3] != "--session-id" or argv[5] != "--prompt-id" or argv[7] != "--capability":
+        return None
+    if argv[2] == "--relay-start" and len(argv) != 9:
+        return None
+    if argv[2] == "--relay-wait" and (
+        len(argv) != 11 or argv[9:] != ["--wait-seconds", "45"]
+    ):
+        return None
+    return {
+        "action": argv[2],
+        "session_id": argv[4],
+        "prompt_id": argv[6],
+        "capability": argv[8],
+    }
+
+
+def check_orchestrator_relay(payload: dict, command: object) -> None:
+    parsed = relay_invocation(command)
+    current = current_orchestrator_relay(payload)
+    if parsed is None or current is None:
+        deny("Fable must invoke the exact protected orchestrator relay command")
+    _, record = current
+    expected = {
+        "session_id": safe_session_id(payload.get("session_id")),
+        "prompt_id": str(payload.get("prompt_id") or ""),
+        "capability": str(record.get("capability") or ""),
+    }
+    if any(
+        not secrets.compare_digest(parsed[key], value)
+        for key, value in expected.items()
+    ):
+        deny("orchestrator relay invocation does not match its authorization")
+    status = record.get("status")
+    if parsed["action"] == "--relay-start" and status != "READY":
+        deny("orchestrator relay start is not ready")
+    if parsed["action"] == "--relay-wait" and status not in {
+        "RUNNING",
+        "COMPLETE",
+        "BLOCKED",
+    }:
+        deny("orchestrator relay wait has not started")
+
+
 def handle_user_prompt(payload: dict) -> None:
     cleanup_materialized_agents(payload)
     remove_private_record(materialized_agents_record_path(payload.get("session_id")))
+    remove_private_record(orchestrator_relay_record_path(payload.get("session_id")))
     protected_agents: list[str] = []
+    relay_start_command = ""
+    relay_wait_command = ""
     if is_exact_vsdd_entry_prompt(payload.get("prompt")):
         protected_agents = materialize_project_agents(payload)
+        if os.environ.get(PROJECT_AGENTS_READY_ENV) != "1":
+            relay_start_command, relay_wait_command = create_orchestrator_relay(payload)
     path = pr_consent_record_path(payload.get("session_id"))
     remove_private_record(path)
     operation = exact_pr_consent_operation(payload.get("prompt"))
@@ -728,17 +873,29 @@ def handle_user_prompt(payload: dict) -> None:
         except OSError as error:
             deny(f"cannot persist prompt-bound PR consent: {error}")
     if protected_agents:
+        if relay_start_command:
+            context = (
+                "ecc-vsdd materialized project-local protected workers after this "
+                "session's agent registry was initialized. Before any phase work, invoke "
+                f"exactly this Bash start command: {relay_start_command}. Then invoke "
+                f"exactly this Bash wait command: {relay_wait_command}. Repeat only the "
+                "same wait command while its status is RUNNING. Return the child session's "
+                "terminal result and do nothing else. Do not inspect the repository or launch "
+                "an Agent first."
+            )
+        else:
+            context = (
+                "ecc-vsdd protected project workers were present before this child "
+                "session initialized. Launch worker agents only by these unscoped names: "
+                + ", ".join(protected_agents)
+                + ". Never launch ecc-vsdd:vsdd-* plugin-scoped workers."
+            )
         print(
             json.dumps(
                 {
                     "hookSpecificOutput": {
                         "hookEventName": "UserPromptSubmit",
-                        "additionalContext": (
-                            "ecc-vsdd materialized project-local protected workers. "
-                            "Launch worker agents only by these unscoped names: "
-                            + ", ".join(protected_agents)
-                            + ". Never launch ecc-vsdd:vsdd-* plugin-scoped workers."
-                        ),
+                        "additionalContext": context,
                     }
                 }
             )
@@ -846,6 +1003,7 @@ def clear_session_state(payload: dict) -> None:
         pr_consent_record_path,
         session_record_path,
         materialized_agents_record_path,
+        orchestrator_relay_record_path,
     ):
         remove_private_record(resolver(payload.get("session_id")))
 
@@ -860,6 +1018,7 @@ def sweep_expired_session_state() -> None:
         "pr-consent-sessions",
         "session-models",
         "materialized-agent-sessions",
+        "orchestrator-relay-sessions",
     ):
         directory = root / directory_name
         if not directory.exists():
@@ -880,7 +1039,11 @@ def sweep_expired_session_state() -> None:
             ttl = (
                 PR_CONSENT_TTL_SECONDS
                 if directory_name == "pr-consent-sessions"
-                else AUTHORIZATION_TTL_SECONDS
+                else (
+                    ORCHESTRATOR_RELAY_TTL_SECONDS
+                    if directory_name == "orchestrator-relay-sessions"
+                    else AUTHORIZATION_TTL_SECONDS
+                )
             )
             if age < 0 or age > ttl:
                 if directory_name == "materialized-agent-sessions" and record:
@@ -903,6 +1066,158 @@ def sweep_expired_session_state() -> None:
                     if not has_current_owner:
                         remove_recorded_project_agent_files(record)
                 remove_private_record(path)
+
+
+def standalone_orchestrator_relay(
+    arguments: list[str], *, require_prompt_id: bool = True
+) -> tuple[Path, dict]:
+    expected_length = 6 if require_prompt_id else 4
+    if (
+        len(arguments) != expected_length
+        or arguments[0] != "--session-id"
+        or (require_prompt_id and arguments[2] != "--prompt-id")
+        or arguments[-2] != "--capability"
+    ):
+        deny("invalid orchestrator relay arguments")
+    session_id = arguments[1]
+    prompt_id = arguments[3] if require_prompt_id else None
+    capability = arguments[-1]
+    path = orchestrator_relay_record_path(session_id)
+    record = read_private_json(path) if path is not None else None
+    created_at = record.get("created_at") if record else None
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    prompt = str(record.get("prompt") or "") if record else ""
+    if not (
+        path is not None
+        and record
+        and record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-orchestrator-relay"
+        and record.get("session_id") == safe_session_id(session_id)
+        and (prompt_id is None or record.get("prompt_id") == prompt_id)
+        and secrets.compare_digest(str(record.get("capability") or ""), capability)
+        and record.get("cwd") == str(Path.cwd().resolve())
+        and record.get("prompt_sha256")
+        == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        and is_exact_vsdd_entry_prompt(prompt)
+        and 0 <= age <= ORCHESTRATOR_RELAY_TTL_SECONDS
+    ):
+        deny("orchestrator relay authorization is invalid or expired")
+    return path, record
+
+
+def start_orchestrator_relay(arguments: list[str]) -> None:
+    path, record = standalone_orchestrator_relay(arguments)
+    if record.get("status") != "READY" or record.get("consumed_at") is not None:
+        deny("orchestrator relay authorization is consumed or not ready")
+    record["consumed_at"] = int(time.time())
+    record["status"] = "RUNNING"
+    record["started_at"] = int(time.time())
+    try:
+        write_private_json(path, record)
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--relay-supervise",
+                "--session-id",
+                str(record["session_id"]),
+                "--capability",
+                str(record["capability"]),
+            ],
+            cwd=record["cwd"],
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as error:
+        record["status"] = "BLOCKED"
+        record["error"] = f"cannot start protected orchestrator supervisor: {error}"
+        write_private_json(path, record)
+        deny(record["error"])
+    print(
+        json.dumps(
+            {
+                "status": "STARTED",
+                "evidence": str(path),
+                "wait_command": record["wait_command"],
+            }
+        )
+    )
+
+
+def supervise_orchestrator_relay(arguments: list[str]) -> None:
+    path, record = standalone_orchestrator_relay(arguments, require_prompt_id=False)
+    if record.get("status") != "RUNNING":
+        deny("orchestrator relay supervisor is not running")
+    prompt = str(record.get("prompt") or "")
+    claude = os.environ.get("VSDD_CLAUDE_BIN") or shutil.which("claude")
+    if not claude:
+        record["status"] = "BLOCKED"
+        record["error"] = "claude executable not found for orchestrator relay"
+        write_private_json(path, record)
+        return
+    env = os.environ.copy()
+    env[PROJECT_AGENTS_READY_ENV] = "1"
+    command = [
+        claude,
+        "-p",
+        prompt,
+        "--agent",
+        "ecc-vsdd:vsdd-orchestrator",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "dontAsk",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=record["cwd"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        record["status"] = "BLOCKED"
+        record["error"] = f"cannot start protected orchestrator child session: {error}"
+    else:
+        record["returncode"] = completed.returncode
+        record["stdout"] = completed.stdout
+        record["stderr"] = completed.stderr
+        record["status"] = "COMPLETE" if completed.returncode == 0 else "BLOCKED"
+    record["finished_at"] = int(time.time())
+    write_private_json(path, record)
+
+
+def wait_orchestrator_relay(arguments: list[str]) -> None:
+    if len(arguments) != 8 or arguments[-2:] != ["--wait-seconds", "45"]:
+        deny("invalid orchestrator relay wait arguments")
+    path, record = standalone_orchestrator_relay(arguments[:-2])
+    if record.get("status") not in {"RUNNING", "COMPLETE", "BLOCKED"}:
+        deny("orchestrator relay wait has not started")
+    deadline = time.monotonic() + 45
+    while record.get("status") == "RUNNING" and time.monotonic() < deadline:
+        time.sleep(0.25)
+        updated = read_private_json(path)
+        if updated is None:
+            deny("orchestrator relay evidence disappeared")
+        record = updated
+    status = str(record.get("status") or "BLOCKED")
+    if status == "RUNNING":
+        print(json.dumps({"status": "RUNNING", "evidence": str(path)}))
+        return
+    stdout = str(record.get("stdout") or "")
+    stderr = str(record.get("stderr") or record.get("error") or "")
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
+    if stderr:
+        print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
+    print(json.dumps({"status": status, "evidence": str(path)}))
+    raise SystemExit(0 if status == "COMPLETE" else 1)
 
 
 def normalized_agent(agent_type: object) -> str:
@@ -1711,6 +2026,15 @@ def check_launcher(command: object) -> None:
 def main() -> None:
     global ACTIVE_HOOK_EVENT, ACTIVE_PROJECT_AGENT
     arguments = sys.argv[1:]
+    if arguments[:1] == ["--relay-start"]:
+        start_orchestrator_relay(arguments[1:])
+        return
+    if arguments[:1] == ["--relay-wait"]:
+        wait_orchestrator_relay(arguments[1:])
+        return
+    if arguments[:1] == ["--relay-supervise"]:
+        supervise_orchestrator_relay(arguments[1:])
+        return
     strict = arguments == ["--strict"]
     session_start = arguments == ["--session-start"]
     session_end = arguments == ["--session-end"]
@@ -1817,6 +2141,27 @@ def main() -> None:
     check_pinned_agent_definition(agent_type)
     check_recorded_model(payload, agent_type)
     check_effort(payload, agent_type)
+
+    pending_relay = current_orchestrator_relay(payload)
+    if pending_relay is not None and os.environ.get(PROJECT_AGENTS_READY_ENV) != "1":
+        if tool_name == "Skill":
+            requested_skill = str(
+                tool_input.get("skill")
+                or tool_input.get("name")
+                or tool_input.get("command")
+                or ""
+            )
+            if requested_skill not in ORCHESTRATOR_SKILLS:
+                deny(f"Fable cannot invoke non-orchestration skill {requested_skill!r}")
+            allow_validated_tool(strict)
+            return
+        if tool_name != "Bash":
+            deny("Fable must start the protected orchestrator relay before phase work")
+        check_orchestrator_relay(payload, tool_input.get("command"))
+        if strict:
+            authorize_strict_session(payload)
+        allow_validated_tool(True)
+        return
 
     if tool_name == "Bash":
         if tool_input.get("run_in_background") not in (None, False):

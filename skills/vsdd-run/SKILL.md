@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.5
+version: 1.0.0-rc.6
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -50,6 +50,8 @@ Read these contracts before starting or resuming:
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/review-contract.md`
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/implementation-contract.md`
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/runtime-contract.md`
+
+When the trusted `UserPromptSubmit` context supplies exact protected orchestrator relay start and wait commands, invoke start before any repository inspection or worker launch, then invoke the unchanged wait command in the foreground and repeat it on `RUNNING` until terminal. Return the child session's terminal result and do nothing else in the parent session. Each call is bounded to 45 seconds; never replace polling with one long foreground command. The child starts after the project-agent registry exists and executes this skill normally. Never construct or modify a relay command.
 
 Require Claude Code 2.1.214 or later, every named project-local protected worker materialized by the `UserPromptSubmit` hook, the exact pinned models and efforts, Dynamic Workflows for Phase 7, ECC dependency skills, Git, and `gh` when `--until pr` is selected. Launch workers only by their unscoped `vsdd-*-worker` or `vsdd-*-reviewer` names. Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin subagents, so never launch the `ecc-vsdd:vsdd-*` plugin-scoped worker definitions. Never use `inherit`, `max`, a fallback model, or Fable for worker work. Return `VSDD RUN BLOCKED` when a requirement is unavailable.
 

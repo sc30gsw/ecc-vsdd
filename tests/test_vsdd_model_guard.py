@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -35,6 +37,7 @@ class ModelGuardTest(unittest.TestCase):
             {
                 "CLAUDE_PLUGIN_ROOT": str(plugin_root),
                 "TMPDIR": data_root,
+                guard.PROJECT_AGENTS_READY_ENV: "1",
             }
         )
         env.pop("CLAUDE_PLUGIN_DATA", None)
@@ -1250,7 +1253,7 @@ class ModelGuardTest(unittest.TestCase):
         context = json.loads(created.stdout)["hookSpecificOutput"][
             "additionalContext"
         ]
-        self.assertIn("project-local protected workers", context)
+        self.assertIn("protected project workers", context)
         agent_dir = project / ".claude" / "agents"
         expected_names = {
             f"{name.split(':', 1)[1]}.md" for name in guard.ORCHESTRATOR_AGENTS
@@ -1275,6 +1278,186 @@ class ModelGuardTest(unittest.TestCase):
         )
         self.assertEqual(ended.returncode, 0, ended.stderr)
         self.assertEqual(list(agent_dir.glob("*.md")), [])
+
+    def test_parent_session_requires_exact_relay_before_phase_work(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-relay-parent-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-relay-parent-state-")
+        prompt = {
+            "session_id": "relay-parent-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run status sample",
+        }
+        created = self.run_guard(
+            prompt,
+            "--user-prompt-submit",
+            data_root=data_root,
+            ECC_VSDD_PROJECT_AGENTS_READY="",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        context = json.loads(created.stdout)["hookSpecificOutput"][
+            "additionalContext"
+        ]
+        relay_command = context.split("start command: ", 1)[1].split(
+            ". Then invoke", 1
+        )[0]
+        wait_command = context.split("wait command: ", 1)[1].split(
+            ". Repeat", 1
+        )[0]
+        self.assertIn("--relay-start", relay_command)
+        self.assertIn("--relay-wait", wait_command)
+        launch = self.orchestrator_launch()
+        launch.update(
+            {
+                "session_id": prompt["session_id"],
+                "prompt_id": prompt["prompt_id"],
+                "cwd": prompt["cwd"],
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(project / "README.md")},
+            }
+        )
+        denied = self.run_guard(
+            launch,
+            data_root=data_root,
+            ECC_VSDD_PROJECT_AGENTS_READY="",
+        )
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("protected orchestrator relay", denied.stderr)
+
+        launch["tool_name"] = "Bash"
+        launch["tool_input"] = {"command": relay_command}
+        allowed = self.run_guard(
+            launch,
+            data_root=data_root,
+            ECC_VSDD_PROJECT_AGENTS_READY="",
+        )
+        self.assert_strict_allow(allowed)
+
+    def test_relay_supervisor_runs_ready_child_and_wait_returns_result(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-relay-runner-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-relay-runner-state-")
+        payload = {
+            "session_id": "relay-runner-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run status sample",
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "TMPDIR": data_root,
+                guard.PROJECT_AGENTS_READY_ENV: "",
+            },
+            clear=False,
+        ):
+            guard.ACTIVE_HOOK_EVENT = "UserPromptSubmit"
+            start_command, wait_command = guard.create_orchestrator_relay(payload)
+            start_tokens = shlex.split(start_command)
+            wait_tokens = shlex.split(wait_command)
+            capability = start_tokens[-1]
+            completed = subprocess.CompletedProcess(
+                args=["claude"], returncode=0, stdout="child complete\n", stderr=""
+            )
+            supervisor = mock.Mock(pid=4321)
+            with mock.patch.object(
+                guard.subprocess, "Popen", return_value=supervisor
+            ) as detached, mock.patch(
+                "pathlib.Path.cwd", return_value=project
+            ), mock.patch("sys.stdout", new_callable=io.StringIO) as start_stdout:
+                guard.ACTIVE_HOOK_EVENT = ""
+                guard.start_orchestrator_relay(start_tokens[3:])
+            self.assertEqual(detached.call_count, 1)
+            self.assertIn('"status": "STARTED"', start_stdout.getvalue())
+
+            with mock.patch.object(
+                guard.time, "monotonic", side_effect=[0.0, 46.0]
+            ), mock.patch("pathlib.Path.cwd", return_value=project), mock.patch(
+                "sys.stdout", new_callable=io.StringIO
+            ) as running_stdout:
+                guard.wait_orchestrator_relay(wait_tokens[3:])
+            self.assertIn('"status": "RUNNING"', running_stdout.getvalue())
+
+            with mock.patch.object(
+                guard.shutil, "which", return_value="/usr/bin/claude"
+            ), mock.patch.object(
+                guard.subprocess, "run", return_value=completed
+            ) as launched, mock.patch("pathlib.Path.cwd", return_value=project):
+                guard.supervise_orchestrator_relay(
+                    [
+                        "--session-id",
+                        payload["session_id"],
+                        "--capability",
+                        capability,
+                    ]
+                )
+            child_env = launched.call_args.kwargs["env"]
+            self.assertEqual(child_env[guard.PROJECT_AGENTS_READY_ENV], "1")
+            child_command = launched.call_args.args[0]
+            self.assertIn("ecc-vsdd:vsdd-orchestrator", child_command)
+            self.assertIn("dontAsk", child_command)
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch(
+                "pathlib.Path.cwd", return_value=project
+            ):
+                with self.assertRaisesRegex(SystemExit, "0"):
+                    guard.wait_orchestrator_relay(wait_tokens[3:])
+            self.assertIn("child complete", stdout.getvalue())
+            self.assertIn('"status": "COMPLETE"', stdout.getvalue())
+            record_path = guard.orchestrator_relay_record_path(payload["session_id"])
+            self.assertIsNotNone(record_path)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertIsInstance(record["consumed_at"], int)
+
+    def test_relay_parser_and_start_fail_closed(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-relay-errors-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-relay-errors-state-")
+        payload = {
+            "session_id": "relay-errors-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run status sample",
+        }
+        malformed = (
+            "python3 guard.py --relay-start\n--session-id bad",
+            "python3 $(command -v guard.py) --relay-start",
+            "'unterminated",
+            "python3",
+            "python3 /wrong/guard.py --relay-start --session-id s --prompt-id p --capability c",
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PLUGIN_ROOT": str(ROOT),
+                "TMPDIR": data_root,
+                guard.PROJECT_AGENTS_READY_ENV: "",
+            },
+            clear=False,
+        ):
+            for command in malformed:
+                with self.subTest(command=command):
+                    self.assertIsNone(guard.relay_invocation(command))
+            guard.ACTIVE_HOOK_EVENT = "UserPromptSubmit"
+            start_command, wait_command = guard.create_orchestrator_relay(payload)
+            start_tokens = shlex.split(start_command)
+            wait_tokens = shlex.split(wait_command)
+            guard.ACTIVE_HOOK_EVENT = ""
+            with mock.patch("pathlib.Path.cwd", return_value=project):
+                with self.assertRaisesRegex(SystemExit, "2"):
+                    guard.wait_orchestrator_relay(wait_tokens[3:])
+                with mock.patch.object(
+                    guard.subprocess, "Popen", side_effect=OSError("boom")
+                ):
+                    with self.assertRaisesRegex(SystemExit, "2"):
+                        guard.start_orchestrator_relay(start_tokens[3:])
+            record_path = guard.orchestrator_relay_record_path(payload["session_id"])
+            self.assertIsNotNone(record_path)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], "BLOCKED")
+            self.assertIn("cannot start protected orchestrator supervisor", record["error"])
 
     def test_project_worker_materialization_refuses_user_agent_collision(self) -> None:
         project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-agent-collision-"))

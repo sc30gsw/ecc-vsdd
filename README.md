@@ -127,7 +127,7 @@ GitHub PR         (REQ → TASK → commit トレーサビリティ表付き)
 
 marketplace内の`ecc` entryは`affaan-m/ECC`を明示的なHTTPS Git sourceとして参照し、`ecc-vsdd`のplugin manifestが`dependencies: ["ecc"]`で依存を宣言します。`ecc-vsdd`のインストール時にECCも自動解決されるため、`.claude/settings.json`の`enabledPlugins`やECCの個別installは不要です。インストール後、スキルは `/ecc-vsdd:vsdd-init` のように名前空間付きで呼べます（他プラグインと重複しなければ `/vsdd-init` の短縮形も可）。
 
-ルートの`agents/`、`skills/`、`hooks/`、`scripts/`はプラグイン本体にすべて同梱され、15個のVSDD専用agentもinstall cacheへ入ります。ただしClaude Codeはセキュリティ上、plugin subagentの`hooks`を無視します。そのため`/vsdd-*`開始時に、実作業用の13 agentを保護済みproject agentとして`.claude/agents/`へ一時生成し、`SessionEnd`で削除します。異常終了時の正規proxyは次sessionがhash検証後に引き継ぎ、期限切れ時に回収します。手動コピーや`.claude/settings.json`の`enabledPlugins`は不要です。同名のユーザーagentが既にある場合は上書きせず停止します。
+ルートの`agents/`、`skills/`、`hooks/`、`scripts/`はプラグイン本体にすべて同梱され、15個のVSDD専用agentもinstall cacheへ入ります。ただしClaude Codeはセキュリティ上、plugin subagentの`hooks`を無視します。そのため`/vsdd-*`開始時に、実作業用の13 agentを保護済みproject agentとして`.claude/agents/`へ一時生成します。agent registryはprompt受付前に固定されるため、初回だけprompt-bound relayが同じコマンドをdetached child Fable sessionへ自動引き継ぎ、親は45秒単位で完了までpollします。childは登録済みworkerで続行します。proxyは`SessionEnd`で削除し、異常終了時は次sessionがhash検証後に引き継ぎ、期限切れ時に回収します。手動コピーや`.claude/settings.json`の`enabledPlugins`は不要です。同名のユーザーagentが既にある場合は上書きせず停止します。
 
 ## クイックスタート — 全自動
 
