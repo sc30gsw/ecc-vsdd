@@ -2,7 +2,7 @@
 
 ## 前提
 
-- Claude Code 2.1.203以上
+- Claude Code 2.1.214以上
 - macOSまたはLinux、Python 3.10以上（Windows nativeは未対応。WSLはLinux扱い）
 - Dynamic Workflowsが有効なClaude CodeプランまたはAPI環境
 - Git repository

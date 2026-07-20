@@ -36,7 +36,7 @@ Require:
 - `.claude/specs/<slug>/review-results/plan-review.md` with `verdict: PASS` and no failed A–I check;
 - `.claude/specs/_steering/tech.md` with §3 conventions and §4 verification commands;
 - a dedicated integration worktree and non-base integration branch;
-- Claude Code 2.1.203 or later with Dynamic Workflows enabled.
+- Claude Code 2.1.214 or later with Dynamic Workflows enabled.
 
 Stop with `VSDD RUN BLOCKED` when any prerequisite, exact model, effort, or capability is unavailable. Never use a fallback model, `inherit`, or `max`.
 

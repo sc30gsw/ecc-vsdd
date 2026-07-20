@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-MIN_CLAUDE_VERSION = (2, 1, 203)
+MIN_CLAUDE_VERSION = (2, 1, 214)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 STAGES = ("plan", "revise-plan", "implement", "remediate")
 UNATTENDED_ALLOWED_TOOLS = (
@@ -768,7 +768,10 @@ def main() -> None:
         fail("claude executable not found")
     version = claude_version(claude)
     if version < MIN_CLAUDE_VERSION:
-        fail("Claude Code 2.1.203 or later is required for --effort ultracode")
+        fail(
+            "Claude Code 2.1.214 or later is required for verified subagent hooks "
+            "and --effort ultracode"
+        )
     child_plugin_dirs = plugin_dirs_for_child(plugin_root)
 
     prompt = build_prompt(args.stage, args.slug, plugin_root, worktree)

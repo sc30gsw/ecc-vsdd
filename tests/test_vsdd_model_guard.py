@@ -837,14 +837,26 @@ class ModelGuardTest(unittest.TestCase):
         )
         self.assert_strict_allow(allowed)
 
-        pr_worker["tool_input"] = {"command": "gh pr create --fill"}
+        direct_pr_worker = dict(pr_worker)
+        direct_pr_worker.update(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_input": {"command": "gh pr create --fill"},
+            }
+        )
         direct = self.run_global_guard(
-            pr_worker,
+            direct_pr_worker,
             data_root=data_root,
             plugin_root=plugin_root,
         )
-        self.assertEqual(direct.returncode, 2)
-        self.assertIn("direct external Git/GitHub mutation", direct.stderr)
+        self.assertEqual(direct.returncode, 0)
+        decision = json.loads(direct.stdout)["hookSpecificOutput"]
+        self.assertEqual(decision["hookEventName"], "PreToolUse")
+        self.assertEqual(decision["permissionDecision"], "deny")
+        self.assertIn(
+            "direct external Git/GitHub mutation",
+            decision["permissionDecisionReason"],
+        )
 
         status_worker = dict(pr_worker)
         status_worker.update(

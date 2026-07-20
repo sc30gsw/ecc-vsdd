@@ -2,6 +2,16 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
+## [1.0.0-rc.4] - 2026-07-17
+
+### Changed
+
+- worker frontmatter hookと`CLAUDE_PLUGIN_ROOT`の実機検証に合わせ、最低Claude Code versionを2.1.214へ更新。
+
+### Security
+
+- `PreToolUse`拒否を終了コード依存から明示的な`permissionDecision: deny`へ変更し、subagent内でも安全にfail-closedするよう修正。
+
 ## [1.0.0-rc.3] - 2026-07-17
 
 ### Added

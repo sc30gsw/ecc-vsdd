@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.3
+version: 1.0.0-rc.4
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -51,7 +51,7 @@ Read these contracts before starting or resuming:
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/implementation-contract.md`
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/runtime-contract.md`
 
-Require Claude Code 2.1.203 or later, every named plugin agent, the exact pinned models and efforts, Dynamic Workflows for Phase 7, ECC dependency skills, Git, and `gh` when `--until pr` is selected. Never use `inherit`, `max`, a fallback model, or Fable for worker work. Return `VSDD RUN BLOCKED` when a requirement is unavailable.
+Require Claude Code 2.1.214 or later, every named plugin agent, the exact pinned models and efforts, Dynamic Workflows for Phase 7, ECC dependency skills, Git, and `gh` when `--until pr` is selected. Never use `inherit`, `max`, a fallback model, or Fable for worker work. Return `VSDD RUN BLOCKED` when a requirement is unavailable.
 
 ## Lifecycle commands
 

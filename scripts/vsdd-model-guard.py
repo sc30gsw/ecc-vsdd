@@ -155,9 +155,25 @@ SAFE_GH_COMMANDS = {
 SHELL_INTERPRETERS = {"bash", "dash", "ksh", "sh", "zsh"}
 SHELL_COMMAND_WRAPPERS = {"command", "env", "exec", "nohup", "sudo"}
 CODE_INTERPRETERS = {"node", "nodejs", "perl", "python", "python3", "ruby"}
+ACTIVE_HOOK_EVENT = ""
 
 
 def deny(message: str) -> None:
+    if ACTIVE_HOOK_EVENT == "PreToolUse":
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"VSDD control-plane guard: {message}"
+                        ),
+                    }
+                }
+            )
+        )
+        raise SystemExit(0)
     print(f"VSDD control-plane guard: {message}", file=sys.stderr)
     raise SystemExit(2)
 
@@ -1327,6 +1343,7 @@ def check_launcher(command: object) -> None:
 
 
 def main() -> None:
+    global ACTIVE_HOOK_EVENT
     arguments = sys.argv[1:]
     strict = arguments == ["--strict"]
     session_start = arguments == ["--session-start"]
@@ -1348,6 +1365,7 @@ def main() -> None:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError) as error:
         deny(f"invalid hook input: {error}")
+    ACTIVE_HOOK_EVENT = str(payload.get("hook_event_name") or "")
 
     if session_start:
         sweep_expired_session_state()

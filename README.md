@@ -293,7 +293,7 @@ Phase 6ではREQ → 設計 → タスクの連鎖を9項目（観点カバレ�
 
 ## 前提
 
-- [Claude Code](https://claude.com/claude-code) 2.1.203以上
+- [Claude Code](https://claude.com/claude-code) 2.1.214以上
 - macOSまたはLinux（Windows nativeはprivate-record防御を同等条件で検証できるまで未対応。WSLはLinuxとして扱う）
 - Python 3.10以上
 - Dynamic Workflowsを利用できるClaude Codeプラン／API設定

@@ -573,7 +573,7 @@ class LaunchWorkerTest(unittest.TestCase):
             "import json, sys, time\n"
             "from pathlib import Path\n"
             "if '--version' in sys.argv:\n"
-            "    print('2.1.203')\n"
+            "    print('2.1.214')\n"
             "    raise SystemExit(0)\n"
             "session_id = sys.argv[sys.argv.index('--session-id') + 1]\n"
             "time.sleep(0.2)\n"
