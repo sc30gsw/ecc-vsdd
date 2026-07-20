@@ -2,7 +2,7 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
-## [1.0.0-rc.10] - 2026-07-17
+## [1.0.0-rc.11] - 2026-07-21
 
 ### Fixed
 
@@ -11,6 +11,7 @@
 - bootstrapのclean checkout判定も同じ単一`command`形式を認識するよう同期し、生成proxyだけを安全に除外。
 - relay childへClaude Code公式の`--add-dir`でprivateなmanaged worktree rootを付与し、隔離worktreeを明示的なファイルアクセス境界として登録。
 - relay childを`acceptEdits`で起動し、Fableのglobal guardを維持しつつ、subagentが追加済みmanaged worktree内の編集と一般的なファイル操作を無人実行できるよう修正。
+- integration worktreeを`/tmp/vsdd-worktrees/<slug>`へ固定し、Fableが`--add-dir`の外にsibling worktreeを選ぶ経路を除去。
 
 ## [1.0.0-rc.5] - 2026-07-17
 

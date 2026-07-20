@@ -91,12 +91,12 @@ Use the dedicated command for `operation: bootstrap`:
 ```text
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" bootstrap \
   --repo <absolute-clean-source-checkout> --slug <slug> \
-  --worktree <new-absolute-integration-worktree> \
+  --worktree /tmp/vsdd-worktrees/<slug> \
   --request <persisted-feature-brief-or-source-reference> \
   --mode <auto|standard> --until <review|pr> [--base <explicit-ref>]
 ```
 
-It detects the real base, rejects dirty/colliding state, creates `vsdd/<slug>` in the dedicated worktree, leaves the source checkout branch unchanged, and writes only `run-state.json`. Do not manually reproduce these mutations.
+It detects the real base, rejects dirty/colliding state, creates `vsdd/<slug>` at exactly `/tmp/vsdd-worktrees/<slug>`, leaves the source checkout branch unchanged, and writes only `run-state.json`. Do not choose a sibling worktree path or manually reproduce these mutations.
 
 ## Steering integrity
 

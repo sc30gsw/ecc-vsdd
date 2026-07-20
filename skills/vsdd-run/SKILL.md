@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.10
+version: 1.0.0-rc.11
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -66,7 +66,7 @@ Require Claude Code 2.1.214 or later, every named project-local protected worker
    - require the current checkout to be clean;
    - use `vsdd-runtime-state.py bootstrap` as the sole mutation path; it resolves explicit `--base` or the actual repository default branch;
    - record the exact `base_ref`, `base_branch`, and `base_sha`; never default to `main`;
-   - create branch `vsdd/<slug>` and a dedicated integration worktree outside the current checkout;
+   - create branch `vsdd/<slug>` and use exactly `/tmp/vsdd-worktrees/<slug>` as the dedicated integration worktree; never select a sibling or any other worktree root;
    - create `.claude/specs/<slug>/run-state.json` as the only feature-spec file, with `bootstrap_status: READY`, `init: PENDING`, and the original request/source metadata;
    - block if the branch, worktree, spec directory, or run state already existed before this managed bootstrap.
 4. Require the bootstrap command to leave the user's current checkout and branch unchanged, then invoke Steering with `operation: phase`.
