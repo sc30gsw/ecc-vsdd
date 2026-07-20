@@ -15,7 +15,7 @@ This phase is published only from a managed `vsdd-run` whose current, exact user
 
 ## Mandatory execution routing
 
-Delegate PR body generation and broker invocation to a fresh `ecc-vsdd:vsdd-pr-worker` (Sonnet, `medium`). When already running as that agent, execute the steps below inline and do not delegate again. Never let Fable or a reviewer author PR text or perform an external mutation.
+Delegate PR body generation and broker invocation to a fresh `vsdd-pr-worker` (Sonnet, `medium`). When already running as that agent, execute the steps below inline and do not delegate again. Never let Fable or a reviewer author PR text or perform an external mutation.
 
 ## Prerequisites
 

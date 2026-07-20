@@ -58,7 +58,7 @@ Require the artifact to record the inferred TASK DAG, parallel groups, worktree 
 
 ## Stage 2: Independent workflow-plan gate
 
-Launch a new `ecc-vsdd:vsdd-implementation-workflow-reviewer` (Opus, `xhigh`) with disk-only context. It writes:
+Launch a new `vsdd-implementation-workflow-reviewer` (Opus, `xhigh`) with disk-only context. It writes:
 
 ```text
 .claude/specs/<slug>/review-results/implementation-workflow-review.md

@@ -7,7 +7,7 @@ description: This skill should be used to create or revise a traceable VSDD tech
 
 ## Mandatory execution routing
 
-Delegate all design authoring and revision to a fresh `ecc-vsdd:vsdd-design-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate the phase again. Any ECC planning skill runs inside this pinned Opus worker.
+Delegate all design authoring and revision to a fresh `vsdd-design-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate the phase again. Any ECC planning skill runs inside this pinned Opus worker.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior regardless of presentation mode, ask no questions, and do not wait on `CONFIRM`. The persisted design gate and fresh Opus plan review replace manual confirmation; unresolved decisions at the unattended boundary return `BLOCKED`.
 

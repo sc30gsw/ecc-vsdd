@@ -16,6 +16,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
+PROJECT_WORKER_NAMES = {
+    "vsdd-code-reviewer.md",
+    "vsdd-design-worker.md",
+    "vsdd-implementation-workflow-reviewer.md",
+    "vsdd-init-worker.md",
+    "vsdd-plan-reviewer.md",
+    "vsdd-pr-worker.md",
+    "vsdd-remediation-worker.md",
+    "vsdd-requirements-reviewer.md",
+    "vsdd-requirements-worker.md",
+    "vsdd-security-reviewer.md",
+    "vsdd-status-worker.md",
+    "vsdd-steering-worker.md",
+    "vsdd-tasks-worker.md",
+}
+
+
 PHASE_ORDER = (
     "steering",
     "init",
@@ -183,6 +201,42 @@ def detect_base(repo: Path, explicit: str | None) -> dict[str, str]:
     }
 
 
+def is_generated_project_agent_status(repo: Path, status_line: str) -> bool:
+    prefix = "?? .claude/agents/"
+    if not status_line.startswith(prefix):
+        return False
+    filename = status_line[len(prefix) :]
+    if filename not in PROJECT_WORKER_NAMES or "/" in filename:
+        return False
+    path = repo / ".claude" / "agents" / filename
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    expected_name = filename.removesuffix(".md")
+    return all(
+        token in content
+        for token in (
+            PROJECT_AGENT_MARKER,
+            f"name: {expected_name}",
+            "hooks:\n  PreToolUse:",
+            "vsdd-model-guard.py",
+            '            - "--project-agent"',
+        )
+    )
+
+
+def bootstrap_dirty_status(repo: Path) -> list[str]:
+    output = git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+    return [
+        line
+        for line in output.splitlines()
+        if line and not is_generated_project_agent_status(repo, line)
+    ]
+
+
 def bootstrap_run(
     repo: Path,
     slug: str,
@@ -202,7 +256,7 @@ def bootstrap_run(
         raise RuntimeBlocked("bootstrap until must be 'review' or 'pr'")
     if mode not in {"auto", "standard"}:
         raise RuntimeBlocked("bootstrap mode must be 'auto' or 'standard'")
-    if git(repo, "status", "--porcelain=v1", "--untracked-files=all"):
+    if bootstrap_dirty_status(repo):
         raise RuntimeBlocked("managed bootstrap requires a clean source checkout")
 
     base = detect_base(repo, explicit_base)

@@ -7,7 +7,7 @@ description: This skill should be used to convert approved VSDD requirements and
 
 ## Mandatory execution routing
 
-Delegate all task authoring and revision to a fresh `ecc-vsdd:vsdd-tasks-worker` (Sonnet, `high`). When already running as that agent, execute the steps below inline and do not delegate again. Define what must be built and verified; do not prescribe dependencies, concurrency groups, or worktrees because the Phase 7 Dynamic Workflow infers them.
+Delegate all task authoring and revision to a fresh `vsdd-tasks-worker` (Sonnet, `high`). When already running as that agent, execute the steps below inline and do not delegate again. Define what must be built and verified; do not prescribe dependencies, concurrency groups, or worktrees because the Phase 7 Dynamic Workflow infers them.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior, ask no questions, and do not wait on `CONFIRM`. The persisted exact TASK-set gate and fresh Opus plan review replace manual confirmation.
 

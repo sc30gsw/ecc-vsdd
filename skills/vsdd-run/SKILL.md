@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.4
+version: 1.0.0-rc.5
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -51,13 +51,13 @@ Read these contracts before starting or resuming:
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/implementation-contract.md`
 - `${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/runtime-contract.md`
 
-Require Claude Code 2.1.214 or later, every named plugin agent, the exact pinned models and efforts, Dynamic Workflows for Phase 7, ECC dependency skills, Git, and `gh` when `--until pr` is selected. Never use `inherit`, `max`, a fallback model, or Fable for worker work. Return `VSDD RUN BLOCKED` when a requirement is unavailable.
+Require Claude Code 2.1.214 or later, every named project-local protected worker materialized by the `UserPromptSubmit` hook, the exact pinned models and efforts, Dynamic Workflows for Phase 7, ECC dependency skills, Git, and `gh` when `--until pr` is selected. Launch workers only by their unscoped `vsdd-*-worker` or `vsdd-*-reviewer` names. Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin subagents, so never launch the `ecc-vsdd:vsdd-*` plugin-scoped worker definitions. Never use `inherit`, `max`, a fallback model, or Fable for worker work. Return `VSDD RUN BLOCKED` when a requirement is unavailable.
 
 ## Lifecycle commands
 
 ### Start
 
-1. Obtain a lowercase kebab-case slug. When the first argument is a feature brief instead, delegate deterministic slug selection to a fresh `ecc-vsdd:vsdd-init-worker`.
+1. Obtain a lowercase kebab-case slug. When the first argument is a feature brief instead, delegate deterministic slug selection to a fresh `vsdd-init-worker`.
 2. Require sufficient source material: a detailed brief, source file, or supported URL.
 3. Delegate Git setup to a fresh Init worker:
    - pass a context envelope with `operation: bootstrap`; this runs before Phase 0 and is not the Phase 1 Init execution;
@@ -76,15 +76,15 @@ When a source argument is supplied, first delegate source-update mode to a fresh
 
 When and only when the user explicitly supplies `--until pr` for a run already completed at `review`, have a fresh Status worker run deterministic `extend --until pr` before PR preflight. This records the new external-action boundary and reopens the run. Never infer this authorization from an earlier default, a status request, or the existence of review evidence.
 
-Delegate state verification to a fresh `ecc-vsdd:vsdd-status-worker`. Run the deterministic runtime preflight, invalidate the earliest stale phase and all downstream phases, then continue at the first incomplete valid phase. Preserve retry counters unless their owning phase was invalidated by changed upstream input.
+Delegate state verification to a fresh `vsdd-status-worker`. Run the deterministic runtime preflight, invalidate the earliest stale phase and all downstream phases, then continue at the first incomplete valid phase. Preserve retry counters unless their owning phase was invalidated by changed upstream input.
 
 ### Status
 
-Delegate read-only inspection to `ecc-vsdd:vsdd-status-worker`. Print phase, attempts, pinned routing, current blockers, worktree paths, implementation session ID, review verdicts, and exact resume command. Do not enter the phase loop.
+Delegate read-only inspection to `vsdd-status-worker`. Print phase, attempts, pinned routing, current blockers, worktree paths, implementation session ID, review verdicts, and exact resume command. Do not enter the phase loop.
 
 ### Cancel and cleanup
 
-Delegate both operations to `ecc-vsdd:vsdd-init-worker`.
+Delegate both operations to `vsdd-init-worker`.
 
 - `cancel`: stop new work, mark the run cancelled, and preserve all changes and worktrees.
 - `cleanup`: remove only safely integrated TASK worktrees. Keep the integration worktree after PR creation unless explicitly authorized to remove it. Never delete unmerged changes.

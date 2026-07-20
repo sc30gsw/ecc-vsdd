@@ -15,8 +15,8 @@ description: This skill should be used to run separate independent Opus code and
 
 Launch two new disk-only agents against the same full commit SHA:
 
-- `ecc-vsdd:vsdd-code-reviewer` — Opus, `xhigh`;
-- `ecc-vsdd:vsdd-security-reviewer` — Opus, `xhigh`.
+- `vsdd-code-reviewer` — Opus, `xhigh`;
+- `vsdd-security-reviewer` — Opus, `xhigh`.
 
 Run them independently, preferably concurrently. Never reuse implementation context, pass one reviewer's findings to the other, merge them into one author context, or let either reviewer modify source files. Direct invocation from another model must still delegate to these pinned agents.
 

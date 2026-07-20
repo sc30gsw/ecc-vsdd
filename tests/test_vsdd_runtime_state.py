@@ -634,6 +634,57 @@ class RuntimeStateTest(unittest.TestCase):
                 explicit_base=None,
             )
 
+    def test_bootstrap_ignores_only_generated_project_agent_proxies(self) -> None:
+        source = self.make_repo("develop")
+        worktree = source.parent / f"{source.name}-sample-worktree"
+        agent = source / ".claude" / "agents" / "vsdd-status-worker.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(
+            "---\nname: vsdd-status-worker\n"
+            "hooks:\n  PreToolUse:\n"
+            "    - hooks:\n"
+            "        - args:\n"
+            "            - /plugin/scripts/vsdd-model-guard.py\n"
+            '            - "--project-agent"\n'
+            "---\n"
+            f"{runtime.PROJECT_AGENT_MARKER}\n",
+            encoding="utf-8",
+        )
+
+        result = runtime.bootstrap_run(
+            source,
+            "sample",
+            worktree,
+            request="Feature",
+            until="review",
+            mode="auto",
+            explicit_base=None,
+        )
+
+        self.assertEqual(result["status"], "BOOTSTRAPPED")
+
+    def test_bootstrap_rejects_marker_only_project_agent_spoof(self) -> None:
+        source = self.make_repo("develop")
+        worktree = source.parent / f"{source.name}-sample-worktree"
+        agent = source / ".claude" / "agents" / "vsdd-status-worker.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(
+            "---\nname: vsdd-status-worker\n---\n"
+            f"{runtime.PROJECT_AGENT_MARKER}\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(runtime.RuntimeBlocked, "clean source checkout"):
+            runtime.bootstrap_run(
+                source,
+                "sample",
+                worktree,
+                request="Feature",
+                until="review",
+                mode="auto",
+                explicit_base=None,
+            )
+
     def test_review_attempt_must_be_begun_and_increase_monotonically(self) -> None:
         root, spec = self.make_spec()
         self.write_run_state(root, spec)

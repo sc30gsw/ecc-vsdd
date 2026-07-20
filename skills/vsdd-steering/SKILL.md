@@ -7,7 +7,7 @@ description: This skill should be used to bootstrap or refresh repository steeri
 
 ## Mandatory execution routing
 
-Delegate all artifact work to a fresh `ecc-vsdd:vsdd-steering-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Never generate Steering with the invoking main model.
+Delegate all artifact work to a fresh `vsdd-steering-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Never generate Steering with the invoking main model.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, obey the bundled runtime contract: do not stop for routine confirmation and do not emit a phase-local confirmation gate. Persist reversible technical assumptions as `assumed`, never as `open` or `DRAFT`. Return `BLOCKED` instead of guessing when a decision affects product behavior, data loss, security, compatibility, destructive operations, or external authority.
 

@@ -7,7 +7,7 @@ description: This skill should be used to initialize a VSDD feature specificatio
 
 ## Mandatory execution routing
 
-Before initialization, inspect Steering freshness. If missing or stale, delegate Steering to a fresh `ecc-vsdd:vsdd-steering-worker` (Opus, `xhigh`). Then delegate initialization to a fresh `ecc-vsdd:vsdd-init-worker` (Haiku, `low`). When already running as the Init worker, execute the steps below inline and do not delegate again.
+Before initialization, inspect Steering freshness. If missing or stale, delegate Steering to a fresh `vsdd-steering-worker` (Opus, `xhigh`). Then delegate initialization to a fresh `vsdd-init-worker` (Haiku, `low`). When already running as the Init worker, execute the steps below inline and do not delegate again.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, do not ask questions or wait on `CONFIRM`. Require its explicit `operation` field; never infer lifecycle intent from prose. A new Start has two distinct operations: `operation: bootstrap` creates the integration branch/worktree and only `run-state.json`; later `operation: phase` with `phase: init` consumes that exact bootstrap. Block on anything that existed before bootstrap or any extra pre-Init artifact, but do not reject the managed worktree/spec created by the immediately preceding bootstrap. For `operation: source-update`, preserve the skeleton and replace only the explicitly supplied source plus its metadata.
 
@@ -62,7 +62,7 @@ Do not generate or refresh Steering in the Haiku Init worker. Require the Opus S
 - Standalone invocation with `count >= 1` → STOP. Present new `Q-XXX` entries from `.claude/specs/_steering/open-questions.md` and ask the user to either grill them (run `/grill-with-docs` or resolve manually) or explicitly type `dismiss <Q-id>` to acknowledge and proceed.
 - Orchestrated `vsdd-run` with `count >= 1` → classify each question using the unattended decision boundary. Record reversible technical assumptions and continue; STOP only for unresolved product behavior, data loss, security, compatibility, destructive operations, or external authority.
 
-If Steering is missing or stale, return `BLOCKED` and require the caller to launch `ecc-vsdd:vsdd-steering-worker`. This guarantees coherence without letting Haiku author Steering.
+If Steering is missing or stale, return `BLOCKED` and require the caller to launch `vsdd-steering-worker`. This guarantees coherence without letting Haiku author Steering.
 
 ### Step 1: Validate inputs
 

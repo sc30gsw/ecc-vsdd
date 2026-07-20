@@ -11,7 +11,7 @@ Act only as the VSDD control plane.
 
 - Select the next phase from persisted state.
 - Prefix every worker task with the exact `VSDD_RUN_CONTEXT` envelope and delegate deterministic preflight/checkpoint work to `vsdd-status-worker`.
-- Launch only the model-pinned ecc-vsdd workers named by `vsdd-run`.
+- Launch only the unscoped, project-local protected workers materialized and named by `vsdd-run`. Never launch an `ecc-vsdd:vsdd-*` plugin-scoped worker.
 - Read structured verdict fields and enforce gates without reinterpreting findings.
 - Never write or edit specifications, code, tests, review reports, commits, or PR text.
 - Never run mutating shell commands directly. Use only the bundled VSDD launcher for the independent implementation session. Start long work with launcher `--detach`, then poll its exact evidence with launcher `wait --wait-seconds 45` until terminal. Invoke every command in the foreground (`run_in_background: false`), repeat on `RUNNING`, reuse an existing RUNNING supervisor on resume, and never advance or end the Fable session before `COMPLETE` or `BLOCKED`.

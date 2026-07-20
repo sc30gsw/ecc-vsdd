@@ -2,6 +2,16 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
+## [1.0.0-rc.5] - 2026-07-17
+
+### Fixed
+
+- Claude Codeがplugin subagentの`hooks`を無視するため初回無人runのWrite/Bashが拒否される問題。VSDD開始時に13個の保護済みproject agentを一時生成し、実install先のguard pathと生成物hashを検証して、`SessionEnd`で削除する方式へ変更。異常終了後はprivate recordとhashが一致するproxyを次sessionが安全に引き継ぎ、期限切れ時に回収。
+
+### Security
+
+- Fableからplugin-scoped workerを起動する経路を拒否し、session/cwd/promptへ束縛されたunscoped project workerだけを許可。bootstrapのclean判定は正確なmarkerを持つ生成proxyだけを除外。
+
 ## [1.0.0-rc.4] - 2026-07-17
 
 ### Changed

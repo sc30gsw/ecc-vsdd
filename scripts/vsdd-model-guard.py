@@ -56,9 +56,26 @@ EXPECTED_MODEL = {
 WORKERS = set(EXPECTED_EFFORT) - {"ecc-vsdd:vsdd-orchestrator"}
 ORCHESTRATOR_TOOLS = {"Read", "Grep", "Glob", "LS", "Skill", "Agent", "Task"}
 ORCHESTRATOR_AGENTS = WORKERS - {"ecc-vsdd:vsdd-implementation-driver"}
+PROJECT_WORKER_NAMES = {
+    agent_type.split(":", 1)[1]: agent_type for agent_type in ORCHESTRATOR_AGENTS
+}
 ORCHESTRATOR_SKILLS = {"ecc-vsdd:vsdd-run", "vsdd-run"}
 AUTHORIZATION_TTL_SECONDS = 7 * 24 * 60 * 60
 PR_CONSENT_TTL_SECONDS = 24 * 60 * 60
+PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
+VSDD_ENTRY_POINTS = {
+    "vsdd-run",
+    "vsdd-steering",
+    "vsdd-init",
+    "vsdd-requirements",
+    "vsdd-review-requirements",
+    "vsdd-design",
+    "vsdd-tasks",
+    "vsdd-review-plan",
+    "vsdd-workflow",
+    "vsdd-review",
+    "vsdd-pr",
+}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PROMPT_ID_RE = re.compile(r"^[a-zA-Z0-9-]{8,128}$")
 SAFE_GIT_SUBCOMMANDS = {
@@ -156,6 +173,7 @@ SHELL_INTERPRETERS = {"bash", "dash", "ksh", "sh", "zsh"}
 SHELL_COMMAND_WRAPPERS = {"command", "env", "exec", "nohup", "sudo"}
 CODE_INTERPRETERS = {"node", "nodejs", "perl", "python", "python3", "ruby"}
 ACTIVE_HOOK_EVENT = ""
+ACTIVE_PROJECT_AGENT = False
 
 
 def deny(message: str) -> None:
@@ -180,6 +198,8 @@ def deny(message: str) -> None:
 
 def installed_plugin_root() -> Path:
     raw_plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").strip()
+    if not raw_plugin_root and ACTIVE_PROJECT_AGENT:
+        raw_plugin_root = str(Path(__file__).resolve().parents[1])
     if not raw_plugin_root:
         deny("cannot resolve the installed plugin root")
     plugin_root = Path(raw_plugin_root).resolve()
@@ -325,6 +345,13 @@ def pr_consent_record_path(session_id: object) -> Path | None:
     return guard_runtime_root() / "pr-consent-sessions" / f"{safe_id}.json"
 
 
+def materialized_agents_record_path(session_id: object) -> Path | None:
+    safe_id = safe_session_id(session_id)
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "materialized-agent-sessions" / f"{safe_id}.json"
+
+
 def remove_private_record(path: Path | None) -> None:
     if path is None:
         return
@@ -374,33 +401,348 @@ def exact_pr_consent_operation(prompt: object) -> str | None:
     return operation
 
 
-def handle_user_prompt(payload: dict) -> None:
-    path = pr_consent_record_path(payload.get("session_id"))
-    remove_private_record(path)
-    operation = exact_pr_consent_operation(payload.get("prompt"))
-    if operation is None:
-        return
-    cwd = normalized_cwd(payload)
-    prompt_id = str(payload.get("prompt_id") or "")
-    prompt = str(payload.get("prompt") or "")
-    if path is None or cwd is None or not PROMPT_ID_RE.fullmatch(prompt_id):
-        deny("explicit PR consent requires session_id, cwd, and prompt_id")
+def is_exact_vsdd_entry_prompt(prompt: object) -> bool:
+    raw = str(prompt or "")
+    if not raw or "\n" in raw or "\r" in raw or raw != raw.strip():
+        return False
     try:
+        argv = shlex.split(raw)
+    except ValueError:
+        return False
+    if not argv or not argv[0].startswith("/"):
+        return False
+    command = argv[0][1:]
+    if command.startswith("ecc-vsdd:"):
+        command = command.split(":", 1)[1]
+    return command in VSDD_ENTRY_POINTS
+
+
+def project_agent_directory(cwd: str) -> Path:
+    root = Path(cwd)
+    claude_dir = root / ".claude"
+    agent_dir = claude_dir / "agents"
+    for directory in (claude_dir, agent_dir):
+        if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
+            deny(f"project agent directory is unsafe: {directory}")
+        try:
+            directory.mkdir(exist_ok=True)
+        except OSError as error:
+            deny(f"cannot create project agent directory {directory}: {error}")
+    return agent_dir
+
+
+def rendered_project_agent(agent_type: str) -> str:
+    source = agent_definition_path(agent_type)
+    try:
+        content = source.read_text(encoding="utf-8")
+    except OSError as error:
+        deny(f"cannot read project agent template {source}: {error}")
+    parts = content.split("---", 2)
+    if len(parts) != 3 or parts[0].strip() or "\nhooks:" in parts[1]:
+        deny(f"project agent template has unsupported frontmatter: {source}")
+    guard_script = installed_plugin_root() / "scripts" / "vsdd-model-guard.py"
+    hook = (
+        "\nhooks:\n"
+        "  PreToolUse:\n"
+        "    - matcher: \"\"\n"
+        "      hooks:\n"
+        "        - type: command\n"
+        "          command: python3\n"
+        "          args:\n"
+        f"            - {json.dumps(str(guard_script))}\n"
+        "            - \"--project-agent\"\n"
+    )
+    return f"---{parts[1].rstrip()}{hook}---{parts[2].rstrip()}\n\n{PROJECT_AGENT_MARKER}\n"
+
+
+def atomic_write_project_agent(path: Path, content: str) -> None:
+    descriptor = -1
+    temporary: Path | None = None
+    try:
+        descriptor, raw_temporary = tempfile.mkstemp(
+            prefix=".ecc-vsdd-agent-", dir=path.parent
+        )
+        temporary = Path(raw_temporary)
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # The target was checked before rendering, but another session could
+        # create it before this write. Link without replacement so a project
+        # agent is never overwritten across that race.
+        os.link(temporary, path)
+        temporary.unlink()
+        temporary = None
+    except OSError as error:
+        deny(f"cannot materialize protected project agent {path}: {error}")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
+def recorded_project_agent_exists(
+    cwd: str, name: str, target: Path, content_hash: str
+) -> bool:
+    directory = guard_runtime_root() / "materialized-agent-sessions"
+    if not directory.exists():
+        return False
+    now_value = time.time()
+    for record_path in directory.glob("*.json"):
+        record = read_private_json(record_path)
+        created_at = record.get("created_at") if record else None
+        files = record.get("files") if record else None
+        entry = files.get(name) if isinstance(files, dict) else None
+        if (
+            record
+            and record.get("schema_version") == 1
+            and record.get("authorization") == "vsdd-project-agents"
+            and record.get("cwd") == cwd
+            and isinstance(created_at, int)
+            and 0 <= now_value - created_at <= AUTHORIZATION_TTL_SECONDS
+            and isinstance(entry, dict)
+            and entry.get("path") == str(target)
+            and entry.get("sha256") == content_hash
+        ):
+            return True
+    return False
+
+
+def remove_recorded_project_agent_files(record: dict) -> None:
+    files = record.get("files")
+    if not isinstance(files, dict):
+        return
+    for name, entry in files.items():
+        if name not in PROJECT_WORKER_NAMES or not isinstance(entry, dict):
+            continue
+        target = Path(str(entry.get("path") or ""))
+        if target.is_symlink() or not target.is_file():
+            continue
+        try:
+            content = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if hashlib.sha256(content.encode("utf-8")).hexdigest() == entry.get("sha256"):
+            try:
+                target.unlink()
+            except OSError:
+                continue
+
+
+def materialize_project_agents(payload: dict) -> list[str]:
+    cwd = normalized_cwd(payload)
+    path = materialized_agents_record_path(payload.get("session_id"))
+    prompt_id = str(payload.get("prompt_id") or "")
+    if cwd is None or path is None or not PROMPT_ID_RE.fullmatch(prompt_id):
+        deny("protected project agents require session_id, cwd, and prompt_id")
+    agent_dir = project_agent_directory(cwd)
+    rendered: dict[str, tuple[Path, str, bool]] = {}
+    for name, agent_type in sorted(PROJECT_WORKER_NAMES.items()):
+        target = agent_dir / f"{name}.md"
+        content = rendered_project_agent(agent_type)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        adopted = False
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or not target.is_file():
+                deny(f"refuses to overwrite existing project agent: {target}")
+            try:
+                existing = target.read_text(encoding="utf-8")
+            except OSError as error:
+                deny(f"cannot inspect existing project agent {target}: {error}")
+            if (
+                hashlib.sha256(existing.encode("utf-8")).hexdigest() != content_hash
+                or not recorded_project_agent_exists(
+                    cwd, name, target, content_hash
+                )
+            ):
+                deny(f"refuses to overwrite existing project agent: {target}")
+            adopted = True
+        rendered[name] = (target, content, adopted)
+    files: dict[str, dict[str, str]] = {}
+    created: set[str] = set()
+    try:
+        for name, (target, content, adopted) in rendered.items():
+            if not adopted:
+                atomic_write_project_agent(target, content)
+                created.add(name)
+            files[name] = {
+                "path": str(target),
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            }
         write_private_json(
             path,
             {
                 "schema_version": 1,
-                "authorization": "vsdd-pr-consent",
+                "authorization": "vsdd-project-agents",
                 "session_id": safe_session_id(payload.get("session_id")),
                 "cwd": cwd,
                 "prompt_id": prompt_id,
-                "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                "operation": operation,
+                "files": files,
                 "created_at": int(time.time()),
             },
         )
+    except BaseException:
+        # Roll back only files whose bytes still match this generation. This
+        # also handles a record-write failure after all proxies were created.
+        for name, entry in files.items():
+            if name not in created:
+                continue
+            target = Path(entry["path"])
+            if target.is_symlink() or not target.is_file():
+                continue
+            try:
+                content = target.read_text(encoding="utf-8")
+                if hashlib.sha256(content.encode("utf-8")).hexdigest() == entry["sha256"]:
+                    target.unlink()
+            except OSError:
+                pass
+        raise
+    return sorted(files)
+
+
+def materialized_agents_record(payload: dict) -> dict:
+    path = materialized_agents_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    created_at = record.get("created_at") if record else None
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    if not (
+        record
+        and record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-project-agents"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == normalized_cwd(payload)
+        and record.get("prompt_id") == str(payload.get("prompt_id") or "")
+        and isinstance(record.get("files"), dict)
+        and 0 <= age <= AUTHORIZATION_TTL_SECONDS
+    ):
+        deny("VSDD worker lacks a valid materialized project agent record")
+    return record
+
+
+def check_materialized_project_agent(
+    payload: dict, raw_agent_type: object, agent_type: str
+) -> None:
+    expected_name = agent_type.split(":", 1)[1]
+    if str(raw_agent_type or "") != expected_name:
+        deny(
+            f"launch the project-local protected worker {expected_name!r}; "
+            "plugin-scoped worker hooks are ignored by Claude Code"
+        )
+    record = materialized_agents_record(payload)
+    entry = record["files"].get(expected_name)
+    cwd = normalized_cwd(payload)
+    expected_path = (
+        Path(cwd) / ".claude" / "agents" / f"{expected_name}.md"
+        if cwd
+        else None
+    )
+    if not isinstance(entry, dict) or expected_path is None:
+        deny("materialized project agent record is incomplete")
+    path = Path(str(entry.get("path") or ""))
+    if path != expected_path or path.is_symlink() or not path.is_file():
+        deny("materialized project agent path is invalid")
+    try:
+        content = path.read_text(encoding="utf-8")
     except OSError as error:
-        deny(f"cannot persist prompt-bound PR consent: {error}")
+        deny(f"cannot read materialized project agent {path}: {error}")
+    actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if (
+        PROJECT_AGENT_MARKER not in content
+        or entry.get("sha256") != actual_hash
+        or str(installed_plugin_root() / "scripts" / "vsdd-model-guard.py")
+        not in content
+        or '            - "--project-agent"' not in content
+    ):
+        deny(f"materialized project agent was modified: {expected_name}")
+
+
+def cleanup_materialized_agents(payload: dict) -> None:
+    path = materialized_agents_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    if record is None or not isinstance(record.get("files"), dict):
+        return
+    directory = guard_runtime_root() / "materialized-agent-sessions"
+    now_value = time.time()
+    if directory.exists():
+        for other_path in directory.glob("*.json"):
+            if other_path == path:
+                continue
+            other = read_private_json(other_path)
+            created_at = other.get("created_at") if other else None
+            if (
+                other
+                and other.get("cwd") == record.get("cwd")
+                and isinstance(created_at, int)
+                and 0 <= now_value - created_at <= AUTHORIZATION_TTL_SECONDS
+            ):
+                return
+    remove_recorded_project_agent_files(record)
+    cwd = str(record.get("cwd") or "")
+    if cwd:
+        for directory_path in (
+            Path(cwd) / ".claude" / "agents",
+            Path(cwd) / ".claude",
+        ):
+            try:
+                directory_path.rmdir()
+            except OSError:
+                pass
+
+
+def handle_user_prompt(payload: dict) -> None:
+    cleanup_materialized_agents(payload)
+    remove_private_record(materialized_agents_record_path(payload.get("session_id")))
+    protected_agents: list[str] = []
+    if is_exact_vsdd_entry_prompt(payload.get("prompt")):
+        protected_agents = materialize_project_agents(payload)
+    path = pr_consent_record_path(payload.get("session_id"))
+    remove_private_record(path)
+    operation = exact_pr_consent_operation(payload.get("prompt"))
+    if operation is not None:
+        cwd = normalized_cwd(payload)
+        prompt_id = str(payload.get("prompt_id") or "")
+        prompt = str(payload.get("prompt") or "")
+        if path is None or cwd is None or not PROMPT_ID_RE.fullmatch(prompt_id):
+            deny("explicit PR consent requires session_id, cwd, and prompt_id")
+        try:
+            write_private_json(
+                path,
+                {
+                    "schema_version": 1,
+                    "authorization": "vsdd-pr-consent",
+                    "session_id": safe_session_id(payload.get("session_id")),
+                    "cwd": cwd,
+                    "prompt_id": prompt_id,
+                    "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                    "operation": operation,
+                    "created_at": int(time.time()),
+                },
+            )
+        except OSError as error:
+            deny(f"cannot persist prompt-bound PR consent: {error}")
+    if protected_agents:
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": (
+                            "ecc-vsdd materialized project-local protected workers. "
+                            "Launch worker agents only by these unscoped names: "
+                            + ", ".join(protected_agents)
+                            + ". Never launch ecc-vsdd:vsdd-* plugin-scoped workers."
+                        ),
+                    }
+                }
+            )
+        )
 
 
 def current_pr_consent(
@@ -497,11 +839,13 @@ def strict_session_authorized(payload: dict) -> bool:
 
 
 def clear_session_state(payload: dict) -> None:
+    cleanup_materialized_agents(payload)
     for resolver in (
         authorization_record_path,
         pr_authorization_record_path,
         pr_consent_record_path,
         session_record_path,
+        materialized_agents_record_path,
     ):
         remove_private_record(resolver(payload.get("session_id")))
 
@@ -515,6 +859,7 @@ def sweep_expired_session_state() -> None:
         "pr-authorized-sessions",
         "pr-consent-sessions",
         "session-models",
+        "materialized-agent-sessions",
     ):
         directory = root / directory_name
         if not directory.exists():
@@ -538,6 +883,25 @@ def sweep_expired_session_state() -> None:
                 else AUTHORIZATION_TTL_SECONDS
             )
             if age < 0 or age > ttl:
+                if directory_name == "materialized-agent-sessions" and record:
+                    has_current_owner = False
+                    for other_path in directory.glob("*.json"):
+                        if other_path == path:
+                            continue
+                        other = read_private_json(other_path)
+                        other_created_at = other.get("created_at") if other else None
+                        if (
+                            other
+                            and other.get("cwd") == record.get("cwd")
+                            and isinstance(other_created_at, int)
+                            and 0
+                            <= now_value - other_created_at
+                            <= AUTHORIZATION_TTL_SECONDS
+                        ):
+                            has_current_owner = True
+                            break
+                    if not has_current_owner:
+                        remove_recorded_project_agent_files(record)
                 remove_private_record(path)
 
 
@@ -810,9 +1174,11 @@ def authorize_pr_session(payload: dict, worktree: Path, slug: str) -> None:
 
 
 def bind_subagent(payload: dict) -> None:
-    agent_type = normalized_agent(payload.get("agent_type"))
+    raw_agent_type = payload.get("agent_type")
+    agent_type = normalized_agent(raw_agent_type)
     if agent_type not in WORKERS:
         return
+    check_materialized_project_agent(payload, raw_agent_type, agent_type)
     plugin_root = installed_plugin_root()
     context = [
         "Use these injected literal paths. Do not search the filesystem for the "
@@ -1343,13 +1709,14 @@ def check_launcher(command: object) -> None:
 
 
 def main() -> None:
-    global ACTIVE_HOOK_EVENT
+    global ACTIVE_HOOK_EVENT, ACTIVE_PROJECT_AGENT
     arguments = sys.argv[1:]
     strict = arguments == ["--strict"]
     session_start = arguments == ["--session-start"]
     session_end = arguments == ["--session-end"]
     user_prompt_submit = arguments == ["--user-prompt-submit"]
     subagent_start = arguments == ["--subagent-start"]
+    project_agent = arguments == ["--project-agent"]
     if arguments and not any(
         (
             strict,
@@ -1357,6 +1724,7 @@ def main() -> None:
             session_end,
             user_prompt_submit,
             subagent_start,
+            project_agent,
         )
     ):
         deny("unsupported guard argument")
@@ -1366,6 +1734,7 @@ def main() -> None:
     except (json.JSONDecodeError, OSError) as error:
         deny(f"invalid hook input: {error}")
     ACTIVE_HOOK_EVENT = str(payload.get("hook_event_name") or "")
+    ACTIVE_PROJECT_AGENT = project_agent
 
     if session_start:
         sweep_expired_session_state()
@@ -1381,11 +1750,14 @@ def main() -> None:
         bind_subagent(payload)
         return
 
-    agent_type = normalized_agent(payload.get("agent_type"))
+    raw_agent_type = payload.get("agent_type")
+    agent_type = normalized_agent(raw_agent_type)
     tool_name = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input") or {}
 
     if agent_type in WORKERS:
+        if project_agent:
+            check_materialized_project_agent(payload, raw_agent_type, agent_type)
         check_pinned_agent_definition(agent_type)
         # Subagent hooks share the parent session_id and do not expose a model.
         # Applying the parent's SessionStart model would reject every correctly
@@ -1432,6 +1804,8 @@ def main() -> None:
         return
 
     if agent_type not in EXPECTED_EFFORT and not strict:
+        if project_agent:
+            deny("project agent guard may run only inside a pinned VSDD worker")
         return
 
     if agent_type != "ecc-vsdd:vsdd-orchestrator":
@@ -1468,13 +1842,15 @@ def main() -> None:
 
     if tool_name in {"Agent", "Task"}:
         check_subagent_model_overrides(tool_input)
-        requested = normalized_agent(
+        raw_requested = (
             tool_input.get("subagent_type")
             or tool_input.get("agent_type")
             or tool_input.get("name")
         )
+        requested = normalized_agent(raw_requested)
         if requested not in ORCHESTRATOR_AGENTS:
             deny(f"Fable cannot launch unpinned agent {requested!r}")
+        check_materialized_project_agent(payload, raw_requested, requested)
         check_pinned_agent_definition(requested)
         if requested == "ecc-vsdd:vsdd-pr-worker":
             check_pr_launch(payload, tool_input)

@@ -77,16 +77,16 @@ class ModelGuardTest(unittest.TestCase):
             "prompt_id": "prompt-1",
             "cwd": str(ROOT),
             "effort": {"level": "high"},
-            "tool_name": "Agent",
+            "tool_name": "Read",
             "tool_use_id": "tool-launch-1",
-            "tool_input": {"subagent_type": "ecc-vsdd:vsdd-code-reviewer"},
+            "tool_input": {"file_path": str(ROOT / "README.md")},
         }
 
     def user_prompt(self, prompt: str, **overrides: object) -> dict:
         payload: dict[str, object] = {
             "session_id": "orchestrator-session",
             "prompt_id": "prompt-1",
-            "cwd": str(ROOT),
+            "cwd": tempfile.mkdtemp(prefix="ecc-vsdd-user-prompt-project-"),
             "hook_event_name": "UserPromptSubmit",
             "prompt": prompt,
         }
@@ -103,13 +103,10 @@ class ModelGuardTest(unittest.TestCase):
         run_state = worktree / ".claude" / "specs" / "sample" / "run-state.json"
         run_state.parent.mkdir(parents=True)
         run_state.write_text("{}\n", encoding="utf-8")
-        for filename in (
-            "vsdd-orchestrator.md",
-            "vsdd-pr-worker.md",
-            "vsdd-status-worker.md",
-        ):
+        for source in (ROOT / "agents").glob("*.md"):
+            filename = source.name
             (plugin_root / "agents" / filename).write_text(
-                (ROOT / "agents" / filename).read_text(encoding="utf-8"),
+                source.read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
         (plugin_root / "scripts" / "vsdd-runtime-state.py").write_text(
@@ -120,12 +117,18 @@ class ModelGuardTest(unittest.TestCase):
             (ROOT / "scripts" / "vsdd-pr-action.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+        (plugin_root / "scripts" / "vsdd-model-guard.py").write_text(
+            SCRIPT.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         return plugin_root, worktree, run_state
 
     def pr_launch_payload(self, worktree: Path, run_state: Path) -> dict:
         payload = self.orchestrator_launch()
+        payload["cwd"] = str(worktree)
+        payload["tool_name"] = "Agent"
         payload["tool_input"] = {
-            "subagent_type": "ecc-vsdd:vsdd-pr-worker",
+            "subagent_type": "vsdd-pr-worker",
             "prompt": (
                 "VSDD_RUN_CONTEXT\n"
                 "schema_version: 1\n"
@@ -155,7 +158,7 @@ class ModelGuardTest(unittest.TestCase):
             "prompt_id": launch["prompt_id"],
             "cwd": launch["cwd"],
             "hook_event_name": "SubagentStart",
-            "agent_type": "ecc-vsdd:vsdd-pr-worker",
+            "agent_type": "vsdd-pr-worker",
             "agent_id": agent_id,
         }
         result = self.run_guard(
@@ -203,7 +206,11 @@ class ModelGuardTest(unittest.TestCase):
 
     def test_rejects_per_invocation_model_override(self) -> None:
         payload = self.orchestrator_launch()
-        payload["tool_input"]["model"] = "sonnet"
+        payload["tool_name"] = "Agent"
+        payload["tool_input"] = {
+            "subagent_type": "vsdd-code-reviewer",
+            "model": "sonnet",
+        }
 
         result = self.run_guard(payload)
 
@@ -211,8 +218,11 @@ class ModelGuardTest(unittest.TestCase):
         self.assertIn("model override", result.stderr)
 
     def test_rejects_global_subagent_model_override(self) -> None:
+        payload = self.orchestrator_launch()
+        payload["tool_name"] = "Agent"
+        payload["tool_input"] = {"subagent_type": "vsdd-code-reviewer"}
         result = self.run_guard(
-            self.orchestrator_launch(), CLAUDE_CODE_SUBAGENT_MODEL="sonnet"
+            payload, CLAUDE_CODE_SUBAGENT_MODEL="sonnet"
         )
 
         self.assertEqual(result.returncode, 2)
@@ -358,13 +368,17 @@ class ModelGuardTest(unittest.TestCase):
                 )
 
                 self.assertEqual(result.returncode, 0, result.stderr)
-                records = list(Path(data_root).rglob(f"consent-session-{index}.json"))
+                records = [
+                    path
+                    for path in Path(data_root).rglob(f"consent-session-{index}.json")
+                    if path.parent.name == "pr-consent-sessions"
+                ]
                 if prompt in accepted:
                     self.assertEqual(len(records), 1)
                     record = json.loads(records[0].read_text(encoding="utf-8"))
                     self.assertEqual(record["authorization"], "vsdd-pr-consent")
                     self.assertEqual(record["prompt_id"], "prompt-1")
-                    self.assertEqual(record["cwd"], str(ROOT.resolve()))
+                    self.assertEqual(record["cwd"], str(Path(payload["cwd"]).resolve()))
                     requested_operation = prompt.split()[1]
                     self.assertEqual(
                         record["operation"],
@@ -389,7 +403,14 @@ class ModelGuardTest(unittest.TestCase):
         )
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         self.assertEqual(
-            len(list(Path(data_root).rglob("cleared-consent-session.json"))), 1
+            len(
+                [
+                    path
+                    for path in Path(data_root).rglob("cleared-consent-session.json")
+                    if path.parent.name == "pr-consent-sessions"
+                ]
+            ),
+            1,
         )
 
         ordinary = self.user_prompt(
@@ -405,7 +426,12 @@ class ModelGuardTest(unittest.TestCase):
 
         self.assertEqual(cleared.returncode, 0, cleared.stderr)
         self.assertEqual(
-            list(Path(data_root).rglob("cleared-consent-session.json")), []
+            [
+                path
+                for path in Path(data_root).rglob("cleared-consent-session.json")
+                if path.parent.name == "pr-consent-sessions"
+            ],
+            [],
         )
 
     def test_non_pr_workers_cannot_push_or_create_pr(self) -> None:
@@ -451,7 +477,7 @@ class ModelGuardTest(unittest.TestCase):
                     "agent_id": "status-worker-1",
                     "session_id": "external-action-session",
                     "prompt_id": "prompt-1",
-                    "cwd": str(ROOT),
+                    "cwd": tempfile.mkdtemp(prefix="ecc-vsdd-boundary-project-"),
                     "effort": {"level": "low"},
                     "tool_name": "Bash",
                     "tool_input": {"command": command},
@@ -477,7 +503,7 @@ class ModelGuardTest(unittest.TestCase):
                     "agent_id": "status-worker-1",
                     "session_id": "read-only-command-session",
                     "prompt_id": "prompt-1",
-                    "cwd": str(ROOT),
+                    "cwd": tempfile.mkdtemp(prefix="ecc-vsdd-boundary-project-"),
                     "effort": {"level": "low"},
                     "tool_name": "Bash",
                     "tool_input": {"command": command},
@@ -528,7 +554,7 @@ class ModelGuardTest(unittest.TestCase):
                     "agent_id": f"boundary-worker-{index}",
                     "session_id": f"boundary-session-{index}",
                     "prompt_id": f"boundary-prompt-{index}",
-                    "cwd": str(ROOT),
+                    "cwd": tempfile.mkdtemp(prefix="ecc-vsdd-boundary-project-"),
                     "effort": {"level": effort},
                     "tool_name": "Bash",
                     "tool_input": {"command": command},
@@ -558,6 +584,21 @@ class ModelGuardTest(unittest.TestCase):
         plugin_root, worktree, run_state = self.make_pr_gate_fixture()
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-pr-no-consent-")
         launch = self.pr_launch_payload(worktree, run_state)
+        materialized = self.user_prompt(
+            "/ecc-vsdd:vsdd-run status sample",
+            session_id=launch["session_id"],
+            prompt_id=launch["prompt_id"],
+            cwd=launch["cwd"],
+        )
+        self.assertEqual(
+            self.run_guard(
+                materialized,
+                "--user-prompt-submit",
+                data_root=data_root,
+                plugin_root=plugin_root,
+            ).returncode,
+            0,
+        )
 
         missing = self.run_guard(
             launch,
@@ -587,7 +628,7 @@ class ModelGuardTest(unittest.TestCase):
             plugin_root=plugin_root,
         )
         self.assertEqual(mismatched.returncode, 2)
-        self.assertIn("prompt-bound PR consent", mismatched.stderr)
+        self.assertIn("materialized project agent record", mismatched.stderr)
 
     def test_pr_consent_is_one_shot_but_same_tool_hook_is_idempotent(self) -> None:
         plugin_root, worktree, run_state = self.make_pr_gate_fixture()
@@ -937,8 +978,18 @@ class ModelGuardTest(unittest.TestCase):
 
     def test_pr_worker_launch_requires_context_and_ready_preflight(self) -> None:
         missing = self.orchestrator_launch()
-        missing["tool_input"] = {"subagent_type": "ecc-vsdd:vsdd-pr-worker"}
-        rejected = self.run_guard(missing)
+        missing["tool_name"] = "Agent"
+        missing["cwd"] = tempfile.mkdtemp(prefix="ecc-vsdd-missing-context-")
+        materialized = self.user_prompt(
+            "/ecc-vsdd:vsdd-run status sample",
+            session_id=missing["session_id"],
+            prompt_id=missing["prompt_id"],
+            cwd=missing["cwd"],
+        )
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-missing-context-state-")
+        self.run_guard(materialized, "--user-prompt-submit", data_root=data_root)
+        missing["tool_input"] = {"subagent_type": "vsdd-pr-worker"}
+        rejected = self.run_guard(missing, data_root=data_root)
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("VSDD_RUN_CONTEXT", rejected.stderr)
 
@@ -1178,36 +1229,221 @@ class ModelGuardTest(unittest.TestCase):
         self.assertNotIn("CLAUDE_PLUGIN_DATA", skill)
         self.assertNotIn("--data-root", skill)
 
-    def test_every_worker_defines_its_own_pretooluse_guard(self) -> None:
-        expected = (
-            "hooks:\n"
-            "  PreToolUse:\n"
-            "    - matcher: \"\"\n"
-            "      hooks:\n"
-            "        - type: command\n"
-            "          command: python3\n"
-            "          args:\n"
-            "            - \"${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py\""
-        )
-        worker_names = guard.WORKERS
+    def test_user_prompt_materializes_and_cleans_protected_project_workers(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-protected-agents-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-protected-agent-state-")
+        payload = {
+            "session_id": "protected-agent-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run start sample BRIEF.md --until review",
+        }
 
-        for worker_name in worker_names:
-            path = ROOT / "agents" / f"{worker_name.split(':', 1)[1]}.md"
-            frontmatter = path.read_text(encoding="utf-8").split("---", 2)[1]
-            with self.subTest(worker=worker_name):
-                self.assertIn(expected, frontmatter)
+        created = self.run_guard(
+            payload,
+            "--user-prompt-submit",
+            data_root=data_root,
+        )
+
+        self.assertEqual(created.returncode, 0, created.stderr)
+        context = json.loads(created.stdout)["hookSpecificOutput"][
+            "additionalContext"
+        ]
+        self.assertIn("project-local protected workers", context)
+        agent_dir = project / ".claude" / "agents"
+        expected_names = {
+            f"{name.split(':', 1)[1]}.md" for name in guard.ORCHESTRATOR_AGENTS
+        }
+        self.assertEqual({path.name for path in agent_dir.glob("*.md")}, expected_names)
+        for path in agent_dir.glob("*.md"):
+            content = path.read_text(encoding="utf-8")
+            with self.subTest(agent=path.name):
+                self.assertIn(guard.PROJECT_AGENT_MARKER, content)
+                self.assertIn(str(SCRIPT), content)
+                self.assertIn('            - "--project-agent"', content)
+                self.assertIn("hooks:\n  PreToolUse:", content)
+
+        ended = self.run_guard(
+            {
+                **payload,
+                "hook_event_name": "SessionEnd",
+                "reason": "clear",
+            },
+            "--session-end",
+            data_root=data_root,
+        )
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertEqual(list(agent_dir.glob("*.md")), [])
+
+    def test_project_worker_materialization_refuses_user_agent_collision(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-agent-collision-"))
+        agent_dir = project / ".claude" / "agents"
+        agent_dir.mkdir(parents=True)
+        existing = agent_dir / "vsdd-status-worker.md"
+        existing.write_text("---\nname: vsdd-status-worker\n---\nuser file\n")
+
+        result = self.run_guard(
+            {
+                "session_id": "collision-session",
+                "prompt_id": "prompt-12345678",
+                "cwd": str(project),
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "/ecc-vsdd:vsdd-run status sample",
+            },
+            "--user-prompt-submit",
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("refuses to overwrite existing project agent", result.stderr)
+        self.assertEqual(existing.read_text(), "---\nname: vsdd-status-worker\n---\nuser file\n")
+
+    def test_project_worker_materialization_refuses_spoofed_generated_marker(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-agent-marker-spoof-"))
+        agent_dir = project / ".claude" / "agents"
+        agent_dir.mkdir(parents=True)
+        existing = agent_dir / "vsdd-status-worker.md"
+        original = (
+            "---\nname: vsdd-status-worker\n---\n"
+            f"{guard.PROJECT_AGENT_MARKER}\nuser file\n"
+        )
+        existing.write_text(original, encoding="utf-8")
+
+        result = self.run_guard(
+            {
+                "session_id": "marker-spoof-session",
+                "prompt_id": "prompt-12345678",
+                "cwd": str(project),
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "/ecc-vsdd:vsdd-run status sample",
+            },
+            "--user-prompt-submit",
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("refuses to overwrite existing project agent", result.stderr)
+        self.assertEqual(existing.read_text(encoding="utf-8"), original)
+
+    def test_new_session_adopts_recorded_proxies_and_cleanup_preserves_owners(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-agent-adoption-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-agent-adoption-state-")
+        first = {
+            "session_id": "first-proxy-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run start sample BRIEF.md --until review",
+        }
+        second = {
+            **first,
+            "session_id": "second-proxy-session",
+            "prompt_id": "prompt-87654321",
+            "prompt": "/ecc-vsdd:vsdd-run resume sample",
+        }
+
+        self.assertEqual(
+            self.run_guard(
+                first, "--user-prompt-submit", data_root=data_root
+            ).returncode,
+            0,
+        )
+        adopted = self.run_guard(
+            second, "--user-prompt-submit", data_root=data_root
+        )
+        self.assertEqual(adopted.returncode, 0, adopted.stderr)
+        agent_dir = project / ".claude" / "agents"
+        self.assertEqual(len(list(agent_dir.glob("*.md"))), 13)
+
+        self.assertEqual(
+            self.run_guard(
+                {**second, "hook_event_name": "SessionEnd"},
+                "--session-end",
+                data_root=data_root,
+            ).returncode,
+            0,
+        )
+        self.assertEqual(len(list(agent_dir.glob("*.md"))), 13)
+        self.assertEqual(
+            self.run_guard(
+                {**first, "hook_event_name": "SessionEnd"},
+                "--session-end",
+                data_root=data_root,
+            ).returncode,
+            0,
+        )
+        self.assertEqual(list(agent_dir.glob("*.md")), [])
+
+    def test_session_start_removes_expired_recorded_proxies(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-agent-expiry-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-agent-expiry-state-")
+        prompt = {
+            "session_id": "expired-proxy-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run status sample",
+        }
+        self.assertEqual(
+            self.run_guard(
+                prompt, "--user-prompt-submit", data_root=data_root
+            ).returncode,
+            0,
+        )
+        record = next(
+            path
+            for path in Path(data_root).rglob("expired-proxy-session.json")
+            if path.parent.name == "materialized-agent-sessions"
+        )
+        value = json.loads(record.read_text(encoding="utf-8"))
+        value["created_at"] = 0
+        record.write_text(json.dumps(value), encoding="utf-8")
+        record.chmod(0o600)
+
+        started = self.run_guard(
+            {
+                "session_id": "replacement-session",
+                "cwd": str(project),
+                "hook_event_name": "SessionStart",
+                "model": "fable",
+                "effort": {"level": "high"},
+                "agent_type": "ecc-vsdd:vsdd-orchestrator",
+            },
+            "--session-start",
+            data_root=data_root,
+        )
+
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertFalse(record.exists())
+        self.assertEqual(list((project / ".claude" / "agents").glob("*.md")), [])
 
     def test_subagent_start_injects_literal_plugin_root_for_every_worker(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-subagent-start-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-subagent-start-state-")
+        self.run_guard(
+            {
+                "session_id": "shared-session",
+                "prompt_id": "prompt-12345678",
+                "cwd": str(project),
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "/ecc-vsdd:vsdd-run status sample",
+            },
+            "--user-prompt-submit",
+            data_root=data_root,
+        )
         payload = {
             "session_id": "shared-session",
             "prompt_id": "prompt-12345678",
-            "cwd": str(ROOT),
+            "cwd": str(project),
             "hook_event_name": "SubagentStart",
-            "agent_type": "ecc-vsdd:vsdd-steering-worker",
+            "agent_type": "vsdd-steering-worker",
             "agent_id": "steering-worker-1",
         }
 
-        result = self.run_guard(payload, "--subagent-start")
+        result = self.run_guard(
+            payload,
+            "--subagent-start",
+            data_root=data_root,
+        )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
@@ -1219,23 +1455,106 @@ class ModelGuardTest(unittest.TestCase):
         )
 
     def test_subagent_start_rejects_empty_plugin_root(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-empty-root-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-empty-root-state-")
+        self.run_guard(
+            {
+                "session_id": "shared-session",
+                "prompt_id": "prompt-12345678",
+                "cwd": str(project),
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "/ecc-vsdd:vsdd-run status sample",
+            },
+            "--user-prompt-submit",
+            data_root=data_root,
+        )
         payload = {
             "session_id": "shared-session",
             "prompt_id": "prompt-12345678",
-            "cwd": str(ROOT),
+            "cwd": str(project),
             "hook_event_name": "SubagentStart",
-            "agent_type": "ecc-vsdd:vsdd-steering-worker",
+            "agent_type": "vsdd-steering-worker",
             "agent_id": "steering-worker-1",
         }
 
         result = self.run_guard(
             payload,
             "--subagent-start",
+            data_root=data_root,
             CLAUDE_PLUGIN_ROOT="",
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot resolve the installed plugin root", result.stderr)
+
+    def test_orchestrator_rejects_unprotected_plugin_scoped_worker(self) -> None:
+        launch = self.orchestrator_launch()
+        launch["tool_name"] = "Agent"
+        launch["tool_input"] = {
+            "subagent_type": "ecc-vsdd:vsdd-code-reviewer"
+        }
+
+        result = self.run_guard(launch)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("project-local protected worker", result.stderr)
+
+    def test_project_worker_hook_allows_only_an_untampered_materialized_agent(self) -> None:
+        project = Path(tempfile.mkdtemp(prefix="ecc-vsdd-project-hook-"))
+        data_root = tempfile.mkdtemp(prefix="ecc-vsdd-project-hook-state-")
+        prompt = {
+            "session_id": "project-hook-session",
+            "prompt_id": "prompt-12345678",
+            "cwd": str(project),
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/ecc-vsdd:vsdd-run status sample",
+        }
+        created = self.run_guard(
+            prompt,
+            "--user-prompt-submit",
+            data_root=data_root,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        launch = self.orchestrator_launch()
+        launch.update(
+            {
+                "session_id": prompt["session_id"],
+                "prompt_id": prompt["prompt_id"],
+                "cwd": prompt["cwd"],
+            }
+        )
+        self.assert_strict_allow(self.run_guard(launch, data_root=data_root))
+        worker = {
+            "agent_type": "vsdd-status-worker",
+            "session_id": prompt["session_id"],
+            "prompt_id": prompt["prompt_id"],
+            "cwd": prompt["cwd"],
+            "hook_event_name": "PreToolUse",
+            "effort": {"level": "low"},
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(project / "status.txt")},
+        }
+
+        allowed = self.run_guard(
+            worker,
+            "--project-agent",
+            data_root=data_root,
+            CLAUDE_PLUGIN_ROOT="",
+        )
+        self.assert_strict_allow(allowed)
+
+        proxy = project / ".claude" / "agents" / "vsdd-status-worker.md"
+        proxy.write_text(proxy.read_text() + "tampered\n", encoding="utf-8")
+        denied = self.run_guard(
+            worker,
+            "--project-agent",
+            data_root=data_root,
+            CLAUDE_PLUGIN_ROOT="",
+        )
+        self.assertEqual(denied.returncode, 0)
+        decision = json.loads(denied.stdout)["hookSpecificOutput"]
+        self.assertEqual(decision["permissionDecision"], "deny")
+        self.assertIn("materialized project agent", decision["permissionDecisionReason"])
 
     def test_pr_preflight_rejects_empty_plugin_root_before_execution(self) -> None:
         with mock.patch.dict(os.environ, {"CLAUDE_PLUGIN_ROOT": ""}):

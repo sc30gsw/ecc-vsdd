@@ -127,7 +127,7 @@ GitHub PR         (REQ → TASK → commit トレーサビリティ表付き)
 
 marketplace内の`ecc` entryは`affaan-m/ECC`を明示的なHTTPS Git sourceとして参照し、`ecc-vsdd`のplugin manifestが`dependencies: ["ecc"]`で依存を宣言します。`ecc-vsdd`のインストール時にECCも自動解決されるため、`.claude/settings.json`の`enabledPlugins`やECCの個別installは不要です。インストール後、スキルは `/ecc-vsdd:vsdd-init` のように名前空間付きで呼べます（他プラグインと重複しなければ `/vsdd-init` の短縮形も可）。
 
-ルートの`agents/`、`skills/`、`hooks/`、`scripts/`はプラグイン本体に同梱されます。したがってインストール後は15個のVSDD専用agentも利用可能で、別途`agents/`をコピーする必要はありません。
+ルートの`agents/`、`skills/`、`hooks/`、`scripts/`はプラグイン本体にすべて同梱され、15個のVSDD専用agentもinstall cacheへ入ります。ただしClaude Codeはセキュリティ上、plugin subagentの`hooks`を無視します。そのため`/vsdd-*`開始時に、実作業用の13 agentを保護済みproject agentとして`.claude/agents/`へ一時生成し、`SessionEnd`で削除します。異常終了時の正規proxyは次sessionがhash検証後に引き継ぎ、期限切れ時に回収します。手動コピーや`.claude/settings.json`の`enabledPlugins`は不要です。同名のユーザーagentが既にある場合は上書きせず停止します。
 
 ## クイックスタート — 全自動
 
@@ -155,7 +155,7 @@ claude --agent ecc-vsdd:vsdd-orchestrator --effort high
 /ecc-vsdd:vsdd-run cleanup mail-groups-filter
 ```
 
-Fableは成果物・コード・テスト・レビュー・PR本文を書きません。SkillスコープのhookがFableのWrite/Edit、任意Bash、未固定agent起動、呼出し時のmodel overrideを拒否し、各工程を次のモデルへ強制ルーティングします。`vsdd-run`のstrict hookは検証済みorchestratorのsession IDとcwdを、ユーザー専用OS runtime directory（directory `0700`、record `0600`、7日TTL）へ記録します。Claude Codeではplugin-level PreToolUse hookはsubagent内部へ自動継承されないため、全worker agentのfrontmatterにも同じguardを同梱しています。同じsession ID・cwdを共有し、pinned agent type・定義・model・effortの検証を通過したworkerだけにworker-local hookがClaude Codeの`permissionDecision: allow`を返し、`SessionEnd`でrecordを削除します。subagent PreToolUse payloadの`agent_id`有無はClaude Codeのバージョンにより異なるため認証には依存せず、PRの実agent IDは必ず`SubagentStart`でcapability recordへ束縛し、broker呼出しの`--agent-id`と照合します。`SubagentStart`は実インストール先のruntime/launcher/brokerもliteral pathとしてworkerへ注入するため、Bash環境の`${CLAUDE_PLUGIN_ROOT}`やfilesystem探索に依存しません。project permission設定なしで無人実行でき、直接起動worker・別session・別cwd・strict認可前のworkerは自動承認されません。Claude Codeのsubagent hook payloadには実modelが含まれず、バージョンによっては実effortも省略されるため、guardは親Fableの値をsubagentへ誤適用しません。代わりに起動前override拒否と配布agent frontmatterを必ず検査し、payloadにeffortがある場合は実効値も照合します。独立main sessionは自身のpayloadに含まれるmodelを検証し、effortを必須検証します。
+Fableは成果物・コード・テスト・レビュー・PR本文を書きません。SkillスコープのhookがFableのWrite/Edit、任意Bash、未固定agent起動、呼出し時のmodel overrideを拒否し、各工程を次のモデルへ強制ルーティングします。`vsdd-run`のstrict hookは検証済みorchestratorのsession IDとcwdを、ユーザー専用OS runtime directory（directory `0700`、record `0600`、7日TTL）へ記録します。`UserPromptSubmit` hookはplugin同梱定義からproject-local protected workerを原子的に生成し、実install先のguard pathをfrontmatterへ埋め込みます。Fableはunscoped worker名だけを起動でき、Claude Codeがhookを無視するplugin-scoped workerは機械的に拒否されます。同じsession ID・cwd・prompt IDを共有し、生成物hash、pinned agent type・定義・model・effortの検証を通過したworkerだけにworker-local hookが`permissionDecision: allow`を返します。生成物とprivate recordは`SessionEnd`で削除します。subagent PreToolUse payloadの`agent_id`有無はClaude Codeのバージョンにより異なるため認証には依存せず、PRの実agent IDは必ず`SubagentStart`でcapability recordへ束縛し、broker呼出しの`--agent-id`と照合します。`SubagentStart`は実インストール先のruntime/launcher/brokerもliteral pathとしてworkerへ注入するため、Bash環境の`${CLAUDE_PLUGIN_ROOT}`やfilesystem探索に依存しません。project permission設定なしで無人実行でき、直接起動worker・別session・別cwd・strict認可前のworkerは自動承認されません。Claude Codeのsubagent hook payloadには実modelが含まれず、バージョンによっては実effortも省略されるため、guardは親Fableの値をsubagentへ誤適用しません。代わりに起動前override拒否と配布agent frontmatterを必ず検査し、payloadにeffortがある場合は実効値も照合します。独立main sessionは自身のpayloadに含まれるmodelを検証し、effortを必須検証します。
 
 | 工程 | モデル | effort |
 | --- | --- | --- |

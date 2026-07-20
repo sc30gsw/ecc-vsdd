@@ -7,7 +7,7 @@ description: This skill should be used to create or revise traceable EARS requir
 
 ## Mandatory execution routing
 
-Delegate all requirements authoring and revision to a fresh `ecc-vsdd:vsdd-requirements-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Record reversible technical assumptions, but return `BLOCKED` for unresolved product, data-loss, security, compatibility, destructive, or external-authority decisions.
+Delegate all requirements authoring and revision to a fresh `vsdd-requirements-worker` (Opus, `xhigh`). When already running as that agent, execute the steps below inline and do not delegate again. Record reversible technical assumptions, but return `BLOCKED` for unresolved product, data-loss, security, compatibility, destructive, or external-authority decisions.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, read every persisted source path and the original request from `run-state.json`, do not ask any elicitation or overwrite question, and do not wait on `CONFIRM`. The persisted artifact gate and fresh Opus review replace manual confirmation.
 

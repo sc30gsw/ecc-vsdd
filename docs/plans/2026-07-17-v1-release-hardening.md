@@ -4,7 +4,7 @@
 
 **Goal:** Make the v1.0.0 release enforce explicit user PR consent across every worker, centralize GitHub mutations in a gated broker, automate release checks, and prove the exact release artifact with fresh-install Review and PR E2E runs.
 
-**Architecture:** A global `UserPromptSubmit` hook records a short-lived consent grant bound to `session_id`, canonical `cwd`, and `prompt_id` only for an exact `/vsdd-run ... --until pr` invocation; every other prompt clears it. PR launch consumes that grant idempotently by `tool_use_id`, `SubagentStart` binds the resulting capability to the real PR worker `agent_id`, and a dedicated broker performs push/PR creation after a fresh runtime preflight. A PreToolUse guard bundled in every worker agent rejects guard-observable direct and common wrapped outbound Git/GitHub mutations, including from the PR worker, so the broker is the only supported path.
+**Architecture:** A global `UserPromptSubmit` hook materializes protected project-local workers because Claude Code ignores hooks in plugin subagents, and records a short-lived consent grant bound to `session_id`, canonical `cwd`, and `prompt_id` only for an exact `/vsdd-run ... --until pr` invocation; every other prompt clears it. PR launch consumes that grant idempotently by `tool_use_id`, `SubagentStart` binds the resulting capability to the real PR worker `agent_id`, and a dedicated broker performs push/PR creation after a fresh runtime preflight. The materialized PreToolUse guard rejects guard-observable direct and common wrapped outbound Git/GitHub mutations, including from the PR worker, so the broker is the only supported path.
 
 **Tech Stack:** Python 3.10+, `unittest`, Claude Code plugin hooks, Git, GitHub CLI, GitHub Actions, Markdown/JSON.
 
@@ -202,7 +202,7 @@ Run unit/integration tests and coverage on Linux and macOS, compile Python, vali
 
 **Step 2: Add release metadata**
 
-- Set the candidate version consistently to the current release candidate (`1.0.0-rc.4` after the structured subagent-denial fix).
+- Set the candidate version consistently to the current release candidate (`1.0.0-rc.5` after the protected project-agent fix).
 - Add `$schema`, `displayName`, `repository`, and the selected `license` field to the manifest.
 - Document macOS/Linux as supported and Windows as unsupported until its private-record guarantees are implemented and tested.
 - Record all 0.3.x hardening work in `CHANGELOG.md`.
@@ -244,4 +244,4 @@ Prove a resume/status prompt without `--until pr` cannot launch the broker or pe
 
 **Step 6: Audit every v1.0.0 requirement**
 
-Promote `v1.0.0-rc.4` to `v1.0.0` only when the same commit and installed payload have passed all gates.
+Promote `v1.0.0-rc.5` to `v1.0.0` only when the same commit and installed payload have passed all gates.

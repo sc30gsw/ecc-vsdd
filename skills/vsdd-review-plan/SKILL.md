@@ -7,7 +7,7 @@ description: This skill should be used to independently review the complete VSDD
 
 ## Mandatory execution routing
 
-Delegate each review attempt to a new `ecc-vsdd:vsdd-plan-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit requirements, design, or tasks; write only the plan review artifact.
+Delegate each review attempt to a new `vsdd-plan-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit requirements, design, or tasks; write only the plan review artifact.
 
 **Slash command**: `/vsdd-review-plan <slug>`
 **Purpose**: Comprehensive pre-implementation review of requirements, design, and tasks. Writes "Traceability Coherence" and "Plan Review" findings to `review-results/plan-review.md`.

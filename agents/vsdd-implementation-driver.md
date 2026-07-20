@@ -3,14 +3,6 @@ name: vsdd-implementation-driver
 description: Dedicated Sonnet session that plans and executes Phase 7 through Claude Code Dynamic Workflows.
 model: sonnet
 maxTurns: 200
-hooks:
-  PreToolUse:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: python3
-          args:
-            - "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-model-guard.py"
 skills:
   - ecc-vsdd:vsdd-impl
 ---

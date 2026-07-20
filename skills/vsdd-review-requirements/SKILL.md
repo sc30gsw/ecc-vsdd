@@ -7,7 +7,7 @@ description: This skill should be used to independently review VSDD requirements
 
 ## Mandatory execution routing
 
-Delegate each review attempt to a new `ecc-vsdd:vsdd-requirements-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit `requirements.md`; write only the review artifact.
+Delegate each review attempt to a new `vsdd-requirements-reviewer` (Opus, `xhigh`) with disk-only context. When already running as that reviewer, execute the checks below inline and do not delegate again. Never edit `requirements.md`; write only the review artifact.
 
 ## Invocation
 
@@ -205,7 +205,7 @@ Summary:
 - Mode read from progress.md
 - requirements.md loaded and analyzed (N REQs)
 - Checks run: EARS compliance, ambiguity, missing elements, testability, completeness, numbering, technical feasibility (standard only)
-- Reviewer: fresh independent `ecc-vsdd:vsdd-requirements-reviewer` (Opus xhigh)
+- Reviewer: fresh independent `vsdd-requirements-reviewer` (Opus xhigh)
 - Findings written to review-results/requirement-review.md
 - change-log.md updated with finding count
 - progress.md updated: vsdd-review-requirements → complete

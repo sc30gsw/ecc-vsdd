@@ -13,7 +13,7 @@ description: This skill should be used to inspect VSDD run state, phase validity
 
 ## Routing and scope
 
-Return a purely read-only display directly when no persisted state must change. Delegate hash recomputation, invalidation, retry bookkeeping, cancellation state, or cleanup bookkeeping to a fresh `ecc-vsdd:vsdd-status-worker` (Haiku, `low`).
+Return a purely read-only display directly when no persisted state must change. Delegate hash recomputation, invalidation, retry bookkeeping, cancellation state, or cleanup bookkeeping to a fresh `vsdd-status-worker` (Haiku, `low`).
 
 Never author or revise Steering, requirements, design, tasks, implementation, reviews, commits, or PR text.
 
