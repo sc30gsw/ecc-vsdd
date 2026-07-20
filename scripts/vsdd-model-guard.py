@@ -1172,7 +1172,7 @@ def supervise_orchestrator_relay(arguments: list[str]) -> None:
         "--effort",
         "high",
         "--permission-mode",
-        "dontAsk",
+        "acceptEdits",
     ]
     try:
         completed = subprocess.run(

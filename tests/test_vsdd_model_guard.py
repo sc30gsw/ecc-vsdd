@@ -1398,7 +1398,7 @@ class ModelGuardTest(unittest.TestCase):
             self.assertEqual(child_env[guard.PROJECT_AGENTS_READY_ENV], "1")
             child_command = launched.call_args.args[0]
             self.assertIn("ecc-vsdd:vsdd-orchestrator", child_command)
-            self.assertIn("dontAsk", child_command)
+            self.assertIn("acceptEdits", child_command)
             self.assertEqual(
                 child_command[child_command.index("--add-dir") + 1],
                 str(guard.MANAGED_WORKTREE_ROOT.resolve()),
