@@ -653,6 +653,30 @@ def bind_implementation_session(state_path: Path, session_id: str) -> None:
         fail(f"cannot persist implementation session binding: {error}")
 
 
+def worker_result(response: object) -> dict | None:
+    """Extract the terminal contract without ending background workflows early.
+
+    Claude Code's --json-schema completion enforcement can fire while a Dynamic
+    Workflow is still running.  Prefer its structured_output when present for
+    compatibility, otherwise accept only an exact JSON object in the normal
+    print-mode result field.  Markdown fences or surrounding prose remain a
+    fail-closed error.
+    """
+    if not isinstance(response, dict):
+        return None
+    structured = response.get("structured_output")
+    if isinstance(structured, dict):
+        return structured
+    result = response.get("result")
+    if not isinstance(result, str):
+        return None
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> str:
     spec = worktree / ".vsdd" / "specs" / slug
     contract = plugin_root / "skills" / "vsdd-run" / "references" / "implementation-contract.md"
@@ -666,8 +690,11 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
         "and verify the persisted artifacts before returning the final structured result. "
         "Return BLOCKED on unavailable Dynamic Workflows, missing evidence, or exhausted retries. "
         "Return the exact current Workflow run ID (the wf_... value returned by the Workflow tool) "
-        "as workflow_run_id in the final structured result. "
-        f"In the structured result, set stage exactly to {stage!r}."
+        "as workflow_run_id in the final result. After the Workflow has reached a terminal state "
+        "and all persisted evidence has been verified, return exactly one JSON object and no prose "
+        "or Markdown fences. The object must contain status (COMPLETE or BLOCKED), stage, summary, "
+        "blocked_tasks, and workflow_run_id. "
+        f"Set stage exactly to {stage!r}."
     )
     prompts = {
         "plan": (
@@ -858,17 +885,6 @@ def main() -> None:
     child_plugin_dirs = plugin_dirs_for_child(plugin_root)
 
     prompt = build_prompt(args.stage, args.slug, plugin_root, worktree)
-    schema = {
-        "type": "object",
-        "properties": {
-            "status": {"type": "string", "enum": ["COMPLETE", "BLOCKED"]},
-            "stage": {"type": "string"},
-            "summary": {"type": "string"},
-            "blocked_tasks": {"type": "array", "items": {"type": "string"}},
-            "workflow_run_id": {"type": "string", "pattern": "^wf_[A-Za-z0-9-]+$"},
-        },
-        "required": ["status", "stage", "summary", "workflow_run_id"],
-    }
     command = [
         claude,
         "-p",
@@ -885,14 +901,10 @@ def main() -> None:
     ]
     for child_plugin_dir in child_plugin_dirs:
         command.extend(["--plugin-dir", str(child_plugin_dir)])
-    command.extend(
-        [
-            "--output-format",
-            "json",
-            "--json-schema",
-            json.dumps(schema, separators=(",", ":")),
-        ]
-    )
+    # Do not use --json-schema here. Claude Code can enforce StructuredOutput at
+    # an idle turn while a background Dynamic Workflow is still running, which
+    # prematurely terminates the driver before its completion notification.
+    command.extend(["--output-format", "json"])
     launched_session_id = args.session_id or str(uuid.uuid4())
     if args.session_id:
         command.extend(["--resume", args.session_id])
@@ -1115,7 +1127,7 @@ def main() -> None:
         fail(f"{message}; evidence: {record_path}")
 
     session_id = response.get("session_id") if isinstance(response, dict) else None
-    structured = response.get("structured_output") if isinstance(response, dict) else None
+    structured = worker_result(response)
     if result.returncode != 0:
         fail(f"Claude worker failed; evidence: {record_path}")
     if unexpected or planning_head_changed or planning_content_changed:
@@ -1125,7 +1137,7 @@ def main() -> None:
     if session_id != launched_session_id:
         block_after_run("Claude worker session_id mismatch")
     if not isinstance(structured, dict):
-        block_after_run("Claude worker returned no structured_output")
+        block_after_run("Claude worker returned no exact JSON terminal result")
     workflow_run_id = structured.get("workflow_run_id")
     if not isinstance(workflow_run_id, str) or not re.fullmatch(
         r"wf_[A-Za-z0-9-]+", workflow_run_id

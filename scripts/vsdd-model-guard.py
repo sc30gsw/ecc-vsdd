@@ -79,6 +79,9 @@ IMPLEMENTATION_TOOLS = {
     "Edit",
     "Bash",
     "Workflow",
+    # Dynamic Workflow agents receive this tool only when agent({schema}) is
+    # used. The outer driver does not include it in its CLI allowlist.
+    "StructuredOutput",
     "TodoWrite",
     "TaskCreate",
     "TaskUpdate",

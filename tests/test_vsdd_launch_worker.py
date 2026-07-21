@@ -154,8 +154,27 @@ class LaunchWorkerTest(unittest.TestCase):
         self.assertIn("Read", launcher.UNATTENDED_ALLOWED_TOOLS)
         self.assertIn("Glob", launcher.UNATTENDED_ALLOWED_TOOLS)
         self.assertIn("Grep", launcher.UNATTENDED_ALLOWED_TOOLS)
+        self.assertNotIn("StructuredOutput", launcher.UNATTENDED_ALLOWED_TOOLS)
         self.assertIn("Bash(cat *)", launcher.UNATTENDED_ALLOWED_TOOLS)
         self.assertNotIn("Bash(*)", launcher.UNATTENDED_ALLOWED_TOOLS)
+
+    def test_worker_result_accepts_exact_json_text_without_schema_enforcement(self) -> None:
+        result = launcher.worker_result(
+            {
+                "result": json.dumps(
+                    {
+                        "status": "COMPLETE",
+                        "stage": "plan",
+                        "summary": "planned",
+                        "blocked_tasks": [],
+                        "workflow_run_id": "wf_test-plan",
+                    }
+                )
+            }
+        )
+
+        self.assertEqual(result["status"], "COMPLETE")
+        self.assertIsNone(launcher.worker_result({"result": "```json\n{}\n```"}))
 
     def test_worker_environment_waits_for_background_workflow_without_ceiling(self) -> None:
         env = launcher.worker_environment()

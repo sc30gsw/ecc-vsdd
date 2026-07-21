@@ -1923,6 +1923,19 @@ class ModelGuardTest(unittest.TestCase):
 
         self.assert_strict_allow(result)
 
+        payload["tool_name"] = "StructuredOutput"
+        payload["tool_input"] = {
+            "status": "COMPLETE",
+            "stage": "plan",
+            "summary": "inner workflow schema result",
+            "blocked_tasks": [],
+            "workflow_run_id": "wf_test-plan",
+        }
+        structured_output = self.run_guard(
+            payload, data_root=data_root, **launcher_environment
+        )
+        self.assert_strict_allow(structured_output)
+
         payload["tool_name"] = "Write"
         payload["tool_input"] = {
             "file_path": str(guard.MANAGED_WORKTREE_ROOT / "another-run" / "file.py"),
