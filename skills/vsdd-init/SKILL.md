@@ -7,7 +7,7 @@ description: This skill should be used to initialize a VSDD feature specificatio
 
 ## Mandatory execution routing
 
-Before initialization, inspect Steering freshness. If missing or stale, delegate Steering to a fresh `vsdd-steering-worker` (Opus, `xhigh`). Then delegate initialization to a fresh `vsdd-init-worker` (Haiku, `low`). When already running as the Init worker, execute the steps below inline and do not delegate again.
+Before initialization, inspect Steering availability and its saved artifact gate. If missing, delegate Steering to a fresh `vsdd-steering-worker` (Opus, `xhigh`). If the repository stack, conventions, or verification commands changed, refresh Steering explicitly with `--force`. Then delegate initialization to a fresh `vsdd-init-worker` (Haiku, `low`). When already running as the Init worker, execute the steps below inline and do not delegate again.
 
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, do not ask questions or wait on `CONFIRM`. Require its explicit `operation` field; never infer lifecycle intent from prose. A new Start has two distinct operations: `operation: bootstrap` creates the integration branch/worktree and only `run-state.json`; later `operation: phase` with `phase: init` consumes that exact bootstrap. Block on anything that existed before bootstrap or any extra pre-Init artifact, but do not reject the managed worktree/spec created by the immediately preceding bootstrap. For `operation: source-update`, preserve the skeleton and replace only the explicitly supplied source plus its metadata.
 
@@ -54,7 +54,7 @@ For all remaining steps require `operation: phase` with `phase: init`, or `opera
 
 ### Step 0: Validate the Steering gate
 
-Do not generate or refresh Steering in the Haiku Init worker. Require the Opus Steering worker to have produced a current `.claude/specs/_steering/` repository fingerprint. Read the `⚠ NEW OPEN QUESTIONS: <count>` state from its persisted output.
+Do not generate or refresh Steering in the Haiku Init worker. Require the Opus Steering worker to have produced `.claude/specs/_steering/` artifacts whose saved hashes and decision markers pass deterministic preflight. Read the `⚠ NEW OPEN QUESTIONS: <count>` state from its persisted output.
 
 **Gate**:
 
@@ -62,7 +62,7 @@ Do not generate or refresh Steering in the Haiku Init worker. Require the Opus S
 - Standalone invocation with `count >= 1` → STOP. Present new `Q-XXX` entries from `.claude/specs/_steering/open-questions.md` and ask the user to either grill them (run `/grill-with-docs` or resolve manually) or explicitly type `dismiss <Q-id>` to acknowledge and proceed.
 - Orchestrated `vsdd-run` with `count >= 1` → classify each question using the unattended decision boundary. Record reversible technical assumptions and continue; STOP only for unresolved product behavior, data loss, security, compatibility, destructive operations, or external authority.
 
-If Steering is missing or stale, return `BLOCKED` and require the caller to launch `vsdd-steering-worker`. This guarantees coherence without letting Haiku author Steering.
+If Steering is missing, its saved hash changed, or its decision markers fail, return `BLOCKED` and require the caller to launch `vsdd-steering-worker`. A repository stack/convention change requires an explicit `--force` refresh. This guarantees coherence without letting Haiku author Steering.
 
 ### Step 1: Validate inputs
 
@@ -112,6 +112,8 @@ If a Notion URL is given:
 If a source file or detailed brief is given, persist its normalized content to `.claude/specs/<slug>/source-request.md`. If no source is given during a new unattended run, require the request already persisted in `run-state.json` to be sufficiently detailed; otherwise block.
 
 For `--update-source`, update `**Source**:` in `progress.md`, update `request` and `source_paths` in `run-state.json`, invalidate from Requirements, then snapshot phase `source` using the bundled runtime commands. Stop after this update so Resume can restart at Requirements.
+
+For a new run, the Init checkpoint must snapshot the persisted `source-notion.md` or `source-request.md` as Requirements-owned input evidence. A later source edit must therefore invalidate Requirements and every downstream phase.
 
 ### Step 4: Write progress.md and change-log.md
 

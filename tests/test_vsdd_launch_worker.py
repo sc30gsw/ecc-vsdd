@@ -84,9 +84,14 @@ class LaunchWorkerTest(unittest.TestCase):
     def make_dependency_config(self, root: Path) -> tuple[Path, Path]:
         config_root = root.parent / f"{root.name}-claude-config"
         ecc_root = root.parent / f"{root.name}-ecc-plugin"
+        unrelated_ecc_root = root.parent / f"{root.name}-unrelated-ecc-plugin"
         (ecc_root / ".claude-plugin").mkdir(parents=True)
         (ecc_root / ".claude-plugin" / "plugin.json").write_text(
             json.dumps({"name": "ecc", "version": "2.0.0"}), encoding="utf-8"
+        )
+        (unrelated_ecc_root / ".claude-plugin").mkdir(parents=True)
+        (unrelated_ecc_root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "ecc", "version": "99.0.0"}), encoding="utf-8"
         )
         (config_root / "plugins").mkdir(parents=True)
         (config_root / "plugins" / "installed_plugins.json").write_text(
@@ -94,14 +99,30 @@ class LaunchWorkerTest(unittest.TestCase):
                 {
                     "version": 2,
                     "plugins": {
-                        "ecc@ecc": [
+                        "ecc-vsdd@ecc-vsdd": [
+                            {
+                                "scope": "project",
+                                "projectPath": str(root),
+                                "installPath": str(ROOT),
+                                "version": "1.0.0",
+                            }
+                        ],
+                        "ecc@ecc-vsdd": [
                             {
                                 "scope": "project",
                                 "projectPath": str(root),
                                 "installPath": str(ecc_root),
                                 "version": "2.0.0",
                             }
-                        ]
+                        ],
+                        "ecc@ecc": [
+                            {
+                                "scope": "project",
+                                "projectPath": str(root),
+                                "installPath": str(unrelated_ecc_root),
+                                "version": "99.0.0",
+                            }
+                        ],
                     },
                 }
             ),

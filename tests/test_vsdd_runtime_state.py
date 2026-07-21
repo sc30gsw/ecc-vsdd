@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +28,33 @@ def git(repo: Path, *args: str) -> str:
 
 
 class RuntimeStateTest(unittest.TestCase):
+    def managed_worktree(self, source: Path, slug: str = "sample") -> Path:
+        worktree = runtime.managed_worktree_path(slug)
+        runtime.MANAGED_WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
+        if worktree.exists():
+            self.skipTest(f"managed worktree fixture is already in use: {worktree}")
+
+        def cleanup() -> None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(worktree),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if worktree.exists():
+                shutil.rmtree(worktree)
+
+        self.addCleanup(cleanup)
+        return worktree
+
     def make_repo(self, branch: str = "develop") -> Path:
         root = Path(tempfile.mkdtemp(prefix="ecc-vsdd-runtime-test-"))
         git(root.parent, "init", "-b", branch, str(root))
@@ -251,9 +279,19 @@ class RuntimeStateTest(unittest.TestCase):
             "tasks.md",
         ):
             (spec / name).write_text("placeholder\n", encoding="utf-8")
+        source = spec / "source-request.md"
+        source.write_text("initial source\n", encoding="utf-8")
         runtime.snapshot_phase(root, "sample", "init")
         consumed = runtime.read_state(root, "sample")
         self.assertEqual(consumed["bootstrap_status"], "CONSUMED")
+        self.assertEqual(
+            consumed["source_paths"],
+            [".claude/specs/sample/source-request.md"],
+        )
+
+        source.write_text("changed source\n", encoding="utf-8")
+        invalidated = runtime.audit_state(root, "sample")
+        self.assertEqual(invalidated["earliest_phase"], "requirements")
 
         (spec / "progress.md").write_text("collision\n", encoding="utf-8")
         issues = runtime.bootstrap_issues(root, "sample", state)
@@ -327,6 +365,15 @@ class RuntimeStateTest(unittest.TestCase):
         issues = runtime.task_set_issues(root, "sample", require_ledger=False)
 
         self.assertTrue(any("TASK-002" in issue for issue in issues))
+
+    def test_uncommitted_gate_checks_both_sides_of_a_rename(self) -> None:
+        root, spec = self.make_spec()
+        destination = spec / "moved-product.py"
+        git(root, "mv", "README.md", str(destination.relative_to(root)))
+
+        issues = runtime.uncommitted_non_spec_issues(root, "sample")
+
+        self.assertTrue(any("README.md" in issue for issue in issues))
 
     def test_post_implementation_gate_requires_exact_ledger_mapping(self) -> None:
         root, spec = self.make_spec()
@@ -584,7 +631,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_bootstrap_creates_only_managed_run_state_in_new_worktree(self) -> None:
         source = self.make_repo("develop")
-        worktree = source.parent / f"{source.name}-sample-worktree"
+        worktree = self.managed_worktree(source)
 
         result = runtime.bootstrap_run(
             source,
@@ -607,7 +654,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_bootstrap_rejects_dirty_source_and_existing_branch(self) -> None:
         source = self.make_repo("develop")
-        worktree = source.parent / f"{source.name}-sample-worktree"
+        worktree = self.managed_worktree(source)
         (source / "dirty.txt").write_text("dirty\n", encoding="utf-8")
 
         with self.assertRaisesRegex(runtime.RuntimeBlocked, "clean source checkout"):
@@ -636,7 +683,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_bootstrap_ignores_only_generated_project_agent_proxies(self) -> None:
         source = self.make_repo("develop")
-        worktree = source.parent / f"{source.name}-sample-worktree"
+        worktree = self.managed_worktree(source)
         agent = source / ".claude" / "agents" / "vsdd-status-worker.md"
         agent.parent.mkdir(parents=True)
         agent.write_text(
@@ -664,7 +711,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_bootstrap_rejects_marker_only_project_agent_spoof(self) -> None:
         source = self.make_repo("develop")
-        worktree = source.parent / f"{source.name}-sample-worktree"
+        worktree = self.managed_worktree(source)
         agent = source / ".claude" / "agents" / "vsdd-status-worker.md"
         agent.parent.mkdir(parents=True)
         agent.write_text(

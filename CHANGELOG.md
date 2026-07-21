@@ -2,6 +2,16 @@
 
 このプロジェクトの主な変更を記録します。バージョンは[Semantic Versioning](https://semver.org/)に従います。
 
+## [1.0.0] - 2026-07-21
+
+- managed integration worktree pathをruntime/launcherで機械的に固定し、Phase 7の独立sessionにはrun専用TASK rootだけを`--add-dir`で登録。
+- launcher-boundな実装session認可によりDynamic Workflowのlocal toolを無人許可しつつ、指定外workflow workerを含む直接push/GitHub mutationを拒否。
+- Code/Security review前に未commitの非spec変更を拒否し、review対象commit外の実装が完了扱いになる経路を除去。
+- 初回Initでsource artifactをRequirements入力としてsnapshotし、後続編集時に下流phaseを無効化。
+- isolated implementation childのECC依存を同一marketplace・scopeからのみ解決。
+- 自動repository fingerprint検出という未実装の表現を除き、Steering refresh境界を明確化。
+- renameのsource/destination双方とimplementation tool pathを検証し、未review変更や別run worktreeへの逸脱を拒否。
+
 ## [1.0.0-rc.11] - 2026-07-21
 
 ### Fixed

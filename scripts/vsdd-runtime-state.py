@@ -17,6 +17,7 @@ from pathlib import Path
 
 
 PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
+MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
 PROJECT_WORKER_NAMES = {
     "vsdd-code-reviewer.md",
     "vsdd-design-worker.md",
@@ -250,7 +251,7 @@ def bootstrap_run(
     """Create the one valid pre-Steering managed bootstrap shape."""
     repo = validate_repo(repo.expanduser().resolve())
     validate_slug(slug)
-    integration_worktree = integration_worktree.expanduser().resolve()
+    integration_worktree = require_managed_worktree_path(integration_worktree, slug)
     if not request.strip():
         raise RuntimeBlocked("bootstrap request must not be empty")
     if until not in {"review", "pr"}:
@@ -298,6 +299,7 @@ def bootstrap_run(
         **base,
         "integration_branch": branch,
         "integration_worktree": str(integration_worktree),
+        "managed_worktree_root": str(MANAGED_WORKTREE_ROOT.resolve()),
         "bootstrap_status": "READY",
         "current_phase": "steering",
         "implementation_session_id": None,
@@ -326,6 +328,22 @@ def bootstrap_run(
 def validate_slug(slug: str) -> None:
     if not SLUG_RE.fullmatch(slug):
         raise RuntimeBlocked("slug must be lowercase kebab-case")
+
+
+def managed_worktree_path(slug: str) -> Path:
+    """Return the one integration-worktree path allowed for a managed run."""
+    validate_slug(slug)
+    return (MANAGED_WORKTREE_ROOT / slug).resolve()
+
+
+def require_managed_worktree_path(worktree: Path, slug: str) -> Path:
+    resolved = worktree.expanduser().resolve()
+    expected = managed_worktree_path(slug)
+    if resolved != expected:
+        raise RuntimeBlocked(
+            f"integration worktree must be exactly {expected}; got {resolved}"
+        )
+    return resolved
 
 
 def spec_root(worktree: Path, slug: str) -> Path:
@@ -797,6 +815,14 @@ def snapshot_phase(
         issues = init_output_issues(worktree, slug)
         if issues:
             raise RuntimeBlocked("; ".join(issues))
+        initial_sources = [
+            path for path in artifact_paths(worktree, slug, "source") if path.is_file()
+        ]
+        if not initial_sources:
+            raise RuntimeBlocked(
+                "Init snapshot requires source-notion.md or source-request.md"
+            )
+        paths = [*paths, *initial_sources]
     missing = [path for path in paths if not path.is_file()]
     if phase != "source" and missing:
         rendered = ", ".join(str(path) for path in missing)
@@ -825,9 +851,13 @@ def snapshot_phase(
         _, pr_metadata = validate_pr_artifact(worktree, slug, state)
 
     records = state.setdefault("artifact_hashes", {})
-    owner = owner_for_snapshot(phase)
     captured: dict[str, str] = {}
     for path in paths:
+        owner = (
+            owner_for_snapshot("source")
+            if phase == "init" and path in initial_sources
+            else owner_for_snapshot(phase)
+        )
         key = relative_path(worktree, path)
         digest = digest_path(path)
         existing = records.get(key)
@@ -880,6 +910,9 @@ def snapshot_phase(
             entry["target_commit"] = pr_metadata["target_commit"]
     if phase == "init":
         state["bootstrap_status"] = "CONSUMED"
+        state["source_paths"] = [
+            relative_path(worktree, path) for path in initial_sources
+        ]
     state["schema_version"] = max(int(state.get("schema_version", 1)), 4)
     write_state_atomic(worktree, slug, state)
     return {"status": "SNAPSHOT", "phase": phase, "artifacts": captured}
@@ -1110,6 +1143,42 @@ def task_set_issues(
     return issues
 
 
+def uncommitted_non_spec_issues(worktree: Path, slug: str) -> list[str]:
+    """Reject implementation changes that are neither committed nor VSDD evidence."""
+    output = git(
+        worktree,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+    )
+    allowed_prefixes = (
+        f".claude/specs/{slug}/",
+        ".claude/specs/_steering/",
+    )
+    unsafe: list[str] = []
+    entries = output.split("\0")
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        status = entry[:2]
+        paths = [entry[3:]]
+        if ("R" in status or "C" in status) and index < len(entries):
+            paths.append(entries[index])
+            index += 1
+        for path in paths:
+            if path and not any(path.startswith(prefix) for prefix in allowed_prefixes):
+                unsafe.append(path)
+    return (
+        ["uncommitted non-spec changes remain: " + ", ".join(sorted(unsafe))]
+        if unsafe
+        else []
+    )
+
+
 def bootstrap_issues(worktree: Path, slug: str, state: dict) -> list[str]:
     """Validate the managed Start skeleton consumed by the Phase 1 Init worker."""
     issues: list[str] = []
@@ -1146,6 +1215,14 @@ def integration_issues(worktree: Path, slug: str, state: dict) -> list[str]:
     recorded_worktree = state.get("integration_worktree")
     if recorded_worktree and Path(recorded_worktree).resolve() != worktree.resolve():
         issues.append("run-state integration_worktree does not match the active worktree")
+    if state.get("managed_worktree_root") is not None:
+        expected_root = MANAGED_WORKTREE_ROOT.resolve()
+        if Path(str(state.get("managed_worktree_root"))).resolve() != expected_root:
+            issues.append("run-state managed_worktree_root does not match the runtime root")
+        if worktree.resolve() != managed_worktree_path(slug):
+            issues.append(
+                f"integration worktree must be exactly {managed_worktree_path(slug)}"
+            )
     base_sha = str(state.get("base_sha") or "")
     if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
         issues.append("run-state base_sha is missing or invalid")
@@ -1306,6 +1383,8 @@ def preflight(
                 worktree, slug, require_ledger=require_ledger, state=state
             )
         )
+    if PHASE_INDEX[phase] >= PHASE_INDEX["code-review"]:
+        issues.extend(uncommitted_non_spec_issues(worktree, slug))
     if issues:
         raise RuntimeBlocked("; ".join(issues))
     return {"status": "READY", "phase": phase}
@@ -1322,6 +1401,7 @@ def task_gate(worktree: Path, slug: str) -> dict:
     issues.extend(
         task_set_issues(worktree, slug, require_ledger=True, state=state)
     )
+    issues.extend(uncommitted_non_spec_issues(worktree, slug))
     if issues:
         raise RuntimeBlocked("; ".join(issues))
     return {"status": "READY", "gate": "task-integrity"}

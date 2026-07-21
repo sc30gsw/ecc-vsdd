@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,11 @@ from pathlib import Path
 
 
 MIN_CLAUDE_VERSION = (2, 1, 214)
+MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
+IMPLEMENTATION_CAPABILITY_ENV = "ECC_VSDD_IMPLEMENTATION_CAPABILITY"
+IMPLEMENTATION_WORKTREE_ENV = "ECC_VSDD_IMPLEMENTATION_WORKTREE"
+IMPLEMENTATION_TASK_ROOT_ENV = "ECC_VSDD_IMPLEMENTATION_TASK_ROOT"
+IMPLEMENTATION_SLUG_ENV = "ECC_VSDD_IMPLEMENTATION_SLUG"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 STAGES = ("plan", "revise-plan", "implement", "remediate")
 UNATTENDED_ALLOWED_TOOLS = (
@@ -247,7 +253,7 @@ def plugin_version_key(version: object) -> tuple[tuple[int, ...], int, str]:
 def plugin_dirs_for_child(
     plugin_root: Path, *, config_root: Path | None = None
 ) -> list[Path]:
-    """Resolve manifest dependencies for an isolated --plugin-dir child."""
+    """Resolve same-marketplace dependencies for an isolated --plugin-dir child."""
     plugin_root = plugin_root.resolve()
     manifest_path = plugin_root / ".claude-plugin" / "plugin.json"
     manifest = read_json(manifest_path)
@@ -270,30 +276,75 @@ def plugin_dirs_for_child(
     if not isinstance(installed, dict):
         installed = {}
 
+    plugin_name = str(manifest.get("name") or "")
+    self_contexts: set[tuple[str, str]] = set()
+    marketplaces: set[str] = set()
+    for key, entries in installed.items():
+        key_name, separator, marketplace = str(key).partition("@")
+        if not separator or key_name != plugin_name or not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            install_path = entry.get("installPath")
+            if not isinstance(install_path, str) or not install_path.strip():
+                continue
+            if Path(install_path).expanduser().resolve() != plugin_root:
+                continue
+            marketplaces.add(marketplace)
+            self_contexts.add(
+                (str(entry.get("scope") or ""), str(entry.get("projectPath") or ""))
+            )
+
+    if len(marketplaces) > 1:
+        fail(
+            f"installed plugin root {plugin_root} is registered in multiple marketplaces: "
+            f"{sorted(marketplaces)!r}"
+        )
+    if marketplaces:
+        marketplace = next(iter(marketplaces))
+    else:
+        marketplace_manifest = read_json(
+            plugin_root / ".claude-plugin" / "marketplace.json"
+        )
+        marketplace = str(marketplace_manifest.get("name") or "").strip()
+        if not marketplace:
+            fail(
+                f"cannot determine the marketplace for plugin root {plugin_root}; "
+                "install ecc-vsdd from its marketplace before launch"
+            )
+
     resolved: list[Path] = []
     for dependency in raw_dependencies:
         candidates: list[tuple[tuple[tuple[int, ...], int, str], Path]] = []
-        for key, entries in installed.items():
-            if str(key).split("@", 1)[0] != dependency or not isinstance(entries, list):
+        entries = installed.get(f"{dependency}@{marketplace}", [])
+        if not isinstance(entries, list):
+            entries = []
+        for entry in entries:
+            if not isinstance(entry, dict):
                 continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                install_path = entry.get("installPath")
-                if not isinstance(install_path, str) or not install_path.strip():
-                    continue
-                candidate = Path(install_path).expanduser().resolve()
-                candidate_manifest = read_json(
-                    candidate / ".claude-plugin" / "plugin.json"
+            context = (
+                str(entry.get("scope") or ""),
+                str(entry.get("projectPath") or ""),
+            )
+            if self_contexts and context not in self_contexts:
+                continue
+            install_path = entry.get("installPath")
+            if not isinstance(install_path, str) or not install_path.strip():
+                continue
+            candidate = Path(install_path).expanduser().resolve()
+            candidate_manifest = read_json(
+                candidate / ".claude-plugin" / "plugin.json"
+            )
+            if candidate.is_dir() and candidate_manifest.get("name") == dependency:
+                candidates.append(
+                    (plugin_version_key(entry.get("version")), candidate)
                 )
-                if candidate.is_dir() and candidate_manifest.get("name") == dependency:
-                    candidates.append(
-                        (plugin_version_key(entry.get("version")), candidate)
-                    )
         if not candidates:
             fail(
-                f"required plugin dependency {dependency!r} is not installed in "
-                f"{registry_path}; install the ecc-vsdd plugin dependency before launch"
+                f"required same-marketplace plugin dependency "
+                f"{dependency!r}@{marketplace!r} is not installed in the same scope in "
+                f"{registry_path}; reinstall the ecc-vsdd plugin before launch"
             )
         candidates.sort(key=lambda item: item[0], reverse=True)
         selected = candidates[0][1]
@@ -661,13 +712,22 @@ def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> st
     return prompts[stage] + common
 
 
-def worker_environment() -> dict[str, str]:
+def worker_environment(
+    worktree: Path | None = None,
+    slug: str | None = None,
+    task_worktree_root: Path | None = None,
+) -> dict[str, str]:
     env = os.environ.copy()
     env["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"
     # Print mode otherwise terminates still-running Dynamic Workflows after 600s.
     env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
     env.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
     env.pop("ANTHROPIC_DEFAULT_HAIKU_MODEL", None)
+    if worktree is not None and slug is not None and task_worktree_root is not None:
+        env[IMPLEMENTATION_CAPABILITY_ENV] = secrets.token_urlsafe(32)
+        env[IMPLEMENTATION_WORKTREE_ENV] = str(worktree.resolve())
+        env[IMPLEMENTATION_TASK_ROOT_ENV] = str(task_worktree_root.resolve())
+        env[IMPLEMENTATION_SLUG_ENV] = slug
     return env
 
 
@@ -720,9 +780,32 @@ def main() -> None:
     if args.synchronous and args.detach:
         fail("--synchronous and --detach cannot be combined")
 
-    require_runtime_preflight(
+    state = require_runtime_preflight(
         plugin_root, worktree, args.slug, args.stage, args.session_id
     )
+    recorded_root = state.get("managed_worktree_root")
+    if recorded_root is not None:
+        managed_root = MANAGED_WORKTREE_ROOT.resolve()
+        if Path(str(recorded_root)).resolve() != managed_root:
+            fail("run-state managed_worktree_root does not match the launcher root")
+        if worktree != (managed_root / args.slug).resolve():
+            fail(
+                "implementation worktree must be exactly "
+                f"{(managed_root / args.slug).resolve()}"
+            )
+    else:
+        # Legacy/test states predate the managed-root field. New managed runs
+        # always take the strict branch above.
+        managed_root = worktree.parent.resolve()
+    if not managed_root.is_dir():
+        fail(f"managed worktree root does not exist: {managed_root}")
+    task_worktree_root = managed_root / ".tasks" / args.slug
+    try:
+        task_worktree_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        fail(f"cannot create per-run TASK worktree root: {error}")
+    if task_worktree_root.is_symlink() or not task_worktree_root.is_dir():
+        fail(f"per-run TASK worktree root is unsafe: {task_worktree_root}")
 
     before_paths = changed_paths(worktree)
     before_head = git_output(worktree, "rev-parse", "HEAD")
@@ -795,6 +878,8 @@ def main() -> None:
         "ultracode",
         "--permission-mode",
         "auto",
+        "--add-dir",
+        str(task_worktree_root),
         "--allowedTools",
         *UNATTENDED_ALLOWED_TOOLS,
     ]
@@ -833,6 +918,7 @@ def main() -> None:
                     "subagent_model": "sonnet",
                     "allowed_tools": list(UNATTENDED_ALLOWED_TOOLS),
                     "background_wait_ceiling_ms": "0",
+                    "additional_directory": str(task_worktree_root),
                     "plugin_dirs": [str(path) for path in child_plugin_dirs],
                     "detach": args.detach,
                     "resume": bool(args.session_id),
@@ -939,6 +1025,7 @@ def main() -> None:
         "subagent_model": "sonnet",
         "allowed_tools": list(UNATTENDED_ALLOWED_TOOLS),
         "background_wait_ceiling_ms": "0",
+        "additional_directory": str(task_worktree_root),
         "plugin_dirs": [str(path) for path in child_plugin_dirs],
         "started_from_session": args.session_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -947,7 +1034,7 @@ def main() -> None:
         json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    env = worker_environment()
+    env = worker_environment(worktree, args.slug, task_worktree_root)
     try:
         result = subprocess.run(
             command,

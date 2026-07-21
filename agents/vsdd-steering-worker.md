@@ -1,6 +1,6 @@
 ---
 name: vsdd-steering-worker
-description: Authors or refreshes VSDD steering artifacts when the repository fingerprint is missing or stale.
+description: Authors missing VSDD steering artifacts or explicitly refreshes them after repository stack, convention, or verification-command changes.
 tools: Read, Grep, Glob, Bash, Write, Edit
 model: opus
 effort: xhigh

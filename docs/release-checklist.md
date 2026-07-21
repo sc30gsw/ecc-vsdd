@@ -21,11 +21,10 @@
 - [ ] `scripts/*.py`各ファイルのline coverageが80%以上
 - [ ] `claude plugin validate . --strict`が成功する
 
-## 3. 独立release review
+## 3. 公式仕様照合
 
-- [ ] 新規Opus `xhigh`がRC commitだけを対象にcode reviewし、文書化したthreat model内でP0/P1なしのPASS
-- [ ] 別の新規Opus `xhigh`がRC commitだけを対象にsecurity reviewし、文書化したthreat model内でP0/P1なしのPASS
-- [ ] 指摘修正後はcommit SHAを更新し、両reviewを最初からやり直した
+- [ ] Claude Code公式のPlugin、Hooks、Subagents、Permissions、CLI、Dynamic Workflows仕様と実装を照合した
+- [ ] `--add-dir`、permission mode継承、plugin agent制約、`claude -p`の無人実行条件を確認した
 
 ## 4. 配布物を新規install
 
@@ -35,22 +34,21 @@
 - [ ] install cacheに15 agents、全skills、hooks、scripts、manifestが存在する
 - [ ] source RC archiveとinstall cacheの対象payload hashが一致する
 
-## 5. Fresh-install E2E
+## 5. Fresh-install Review E2E
 
 - [ ] cleanな新規Git repositoryと自己完結した詳細briefを用意した
-- [ ] Fable `high` orchestratorからexact `start ... --until pr`を1回送った
+- [ ] Fable `high` orchestratorからexact `start ... --until review`を1回送った
 - [ ] Steering→Init→Requirements→Design→Tasks→Dynamic Workflow TDD→全Opus reviewが無人完走した
 - [ ] agent/model/effort routingとattempt/commit/artifact hashを`run-state.json`で確認した
 - [ ] Review証拠がcurrent target commitと一致した
-- [ ] direct push/GitHub mutationがなくbrokerだけがpush/PRを実行した
-- [ ] disposable private GitHub repositoryのPR base/head/draftと`pr-result.json`が一致した
-- [ ] terminal stateが`status: COMPLETE`、`reached: pr`
-- [ ] `--until pr`のないresume/statusからPR worker/brokerを起動できない否定E2Eが成功した
+- [ ] Code/Security reviewのCRITICAL/HIGHがあればSonnet remediation後にfresh Opus pairがPASSした
+- [ ] terminal stateが`status: COMPLETE`、`reached: review`
+- [ ] E2E中に外部push/GitHub mutationが発生していない
 
 ## 6. Promote and publish
 
 - [ ] E2Eを通したRC commitから内容変更なしで`1.0.0`へversionだけを更新した
-- [ ] version変更commitへlocal/CI gateと2つのOpus reviewを再実行した
+- [ ] version変更commitへlocal validationを再実行した
 - [ ] signed/annotated `v1.0.0` tagが最終commitを指す
 - [ ] tag archiveのpayload hashが検証済みartifactと一致する
 - [ ] tagをpushし、GitHub release notesを`CHANGELOG.md`から作成した

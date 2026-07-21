@@ -77,7 +77,7 @@ StartのHaiku処理は2段階です。最初は明示的な`operation: bootstrap
 ## 実行中の流れ
 
 ```text
-Steering(Opus xhigh, stale時のみ)
+Steering(Opus xhigh, 未作成時または明示 --force)
   → Init(Haiku low)
   → Requirements(Opus xhigh)
   → Requirements Review(新規Opus xhigh)

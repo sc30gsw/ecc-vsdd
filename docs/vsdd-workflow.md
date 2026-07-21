@@ -16,7 +16,7 @@ REQ → Design → TASK → Test → Commit → Review → PR
 
 | Phase | 名前 | 成果物 | Gate |
 | --- | --- | --- | --- |
-| 0 | Steering | `_steering/{tech,structure,context,open-questions}.md` | repository fingerprintがcurrent、Open/DRAFTなし |
+| 0 | Steering | `_steering/{tech,structure,context,open-questions}.md` | 保存hashが一致し、Open/DRAFTなし（stack・規約変更時は明示refresh） |
 | 1 | Init | spec skeleton、source、`progress.md`、`run-state.json` | 入力と統合worktreeが有効 |
 | 2 | Requirements | `requirements.md` | EARS形式の`REQ-NNN`と受入条件 |
 | 3 | Requirements Review | `review-results/requirement-review.md` | 新規Opusの`verdict: PASS` |

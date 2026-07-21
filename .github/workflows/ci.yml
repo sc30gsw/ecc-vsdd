@@ -50,7 +50,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install supported Claude Code CLI
-        run: npm install --global @anthropic-ai/claude-code@2.1.212
+        run: npm install --global @anthropic-ai/claude-code@2.1.214
       - name: Validate whitespace
         run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD
       - name: Validate plugin and marketplace manifests

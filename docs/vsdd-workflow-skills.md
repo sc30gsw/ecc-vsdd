@@ -54,7 +54,7 @@ Skill frontmatterの`PreToolUse` hookはFableに対して次を機械的に拒�
 /ecc-vsdd:vsdd-steering [--force] [--dry-run]
 ```
 
-`_steering/`を生成またはrefreshします。自動runではrepository fingerprintがmissing/staleの場合だけOpus `xhigh`を起動します。`tech.md`はstack、design viewpoints、conventions、verification commandsの正本です。
+`_steering/`を生成またはrefreshします。自動runでは未作成時にOpus `xhigh`を起動し、既存artifactはhashとOpen/DRAFT markerを検証して再利用します。stack、規約、verification commandが変わった場合は`--force`でrefreshします。`tech.md`はstack、design viewpoints、conventions、verification commandsの正本です。
 
 ### `vsdd-init`
 

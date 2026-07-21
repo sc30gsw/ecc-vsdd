@@ -84,7 +84,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" detect-base \
 
 Persist all returned fields: `base_ref`, `base_branch`, and `base_sha`. The detector uses `origin/HEAD` first, then an unambiguous conventional or sole local branch. It never guesses `main`; ambiguity returns `BLOCKED`. Create `vsdd/<slug>` from the returned `base_ref`, leave the source checkout unchanged, and persist the dedicated integration worktree path.
 
-Managed bootstrap persists `bootstrap_status: READY`, Init `PENDING`, request/source metadata, and no feature-spec file other than `run-state.json`. Phase 1 Init consumes it only after `preflight --phase init`; its snapshot changes the status to `CONSUMED`. Do not apply the normal existing-directory collision rule to this exact managed shape.
+Managed bootstrap persists `bootstrap_status: READY`, Init `PENDING`, request/source metadata, and no feature-spec file other than `run-state.json`. Phase 1 Init consumes it only after `preflight --phase init`; before its snapshot, persist at least one `source-notion.md` or `source-request.md`. The Init snapshot hashes those files with Requirements ownership, records `source_paths`, and changes the bootstrap status to `CONSUMED`, so any later initial-source edit invalidates Requirements and downstream phases. Do not apply the normal existing-directory collision rule to this exact managed shape.
 
 Use the dedicated command for `operation: bootstrap`:
 
@@ -96,7 +96,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-runtime-state.py" bootstrap \
   --mode <auto|standard> --until <review|pr> [--base <explicit-ref>]
 ```
 
-It detects the real base, rejects dirty/colliding state, creates `vsdd/<slug>` at exactly `/tmp/vsdd-worktrees/<slug>`, leaves the source checkout branch unchanged, and writes only `run-state.json`. Do not choose a sibling worktree path or manually reproduce these mutations.
+It detects the real base, rejects dirty/colliding state, mechanically rejects every worktree path except `/tmp/vsdd-worktrees/<slug>`, creates `vsdd/<slug>` there, leaves the source checkout branch unchanged, and writes only `run-state.json`. Do not choose a sibling worktree path or manually reproduce these mutations.
 
 ## Steering integrity
 
@@ -127,6 +127,8 @@ Then resume from Requirements.
 ## TASK integrity
 
 Before Plan Review, require exact TASK ID equality between `tasks.md` and the `progress.md` Tasks table. Before Code Review, Security Review, Remediation, and PR, additionally require every TASK to be `done` and an exact TASK-to-commit mapping under `implementation-ledger.md` heading `## TASK-to-SHA Mapping`. Every mapped commit must both exist and be an ancestor of integration `HEAD`; an object that exists only in an unmerged TASK worktree is invalid.
+
+At the same boundary, reject every uncommitted path outside the feature spec and Steering directories. Reviews target the exact integration commit, so uncommitted product changes are never reviewable completion evidence.
 
 ## Mechanical attempt protocol
 

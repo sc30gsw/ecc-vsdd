@@ -2,6 +2,8 @@
 
 **仕様（spec）を唯一の真実の源**として、Steering → 要件定義 → 設計 → タスク分解 → TDD 実装 → 検証 → PR を **10フェーズ + 厳格な検証ゲート**で機械的に強制する Claude Code プラグインです。`/vsdd-run`を使えば、モデルとeffortを固定した全フェーズを1コマンドで再開可能に連鎖実行できます。
 
+Stable release: **1.0.0** · [MIT License](LICENSE)
+
 VSDD（Verified Spec-Driven Development）の思想を、ECC プラグインのスキル・エージェント群の上に実装しています。
 
 ## 名前の由来
@@ -131,7 +133,7 @@ marketplace内の`ecc` entryは`affaan-m/ECC`を明示的なHTTPS Git sourceと�
 
 ## クイックスタート — 全自動
 
-Fableを制御専用agentとして起動し、`start`を1回実行します。Steeringは未作成またはstaleの場合だけOpusが自動更新します。
+Fableを制御専用agentとして起動し、`start`を1回実行します。Steeringは未作成の場合にOpusが生成します。既存Steeringは保存済みartifact hashとOpen/DRAFT markerを検証して再利用し、リポジトリのstack・規約・検証commandが変わった場合は`/vsdd-steering --force`で更新します。
 
 ```bash
 # プラグイン導入後、Fable highの制御専用セッションを起動
@@ -183,7 +185,9 @@ Startは`operation: bootstrap`を明示し、同梱runtimeの専用`bootstrap` c
 
 各フェーズ前には同梱runtimeが成果物hash、必須の前段phase、構造化review snapshot、SteeringのOpen/DRAFT、固定`vsdd/<slug>` branch、TASK集合を再検証します。上流成果物を正規再生成してsnapshotした場合も、新しい現在phaseだけを完了に保ち、依存する旧review・設計・TASK・実装を無効化します。TASK commitはintegration `HEAD`のancestorでなければならず、Code/Security reviewは現在のfull SHAに一致し、同一の現行review attemptで作成されたOpus PASSでなければPRへ進めません。
 
-Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存もisolated childへ明示的に引き継いでからClaudeを起動します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。専用sessionとWorkflow agentは無人実行用の読取tool権限を持ち、`.claude/specs`はRead/Glob/Grepで参照し、background Workflowの完了通知と成果物検証が終わるまで最終結果を返しません。各stageは現在の`workflow_run_id`を返し、plan/revise-planでは新しい内容と同じrun IDを本文へ保存するため、既存planを読んだだけのstale COMPLETEや古いrun IDの流用はlauncherが拒否します。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記し、完了TASKを`progress.md`の`done`へ同期します。実装・修正stageの最終`COMPLETE`は、launcherが同梱runtimeの`task-gate`を実行し、TASK集合、`done`状態、attempt PASS、Markdown形式のSHA mapping、commit存在性とintegration `HEAD`到達性のすべてが`READY`になった場合だけ受理します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
+Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存とmanaged worktree rootの`--add-dir`をisolated childへ明示的に引き継いでからClaudeを起動します。TASK worktreeはDynamic Workflowが同root内で決定します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。launcher-boundなsession capabilityを検証したglobal hookがWorkflow agentのlocal toolを無人許可し、指定外workerを含む直接push/GitHub mutationは拒否します。`.claude/specs`はRead/Glob/Grepで参照し、background Workflowの完了通知と成果物検証が終わるまで最終結果を返しません。各stageは現在の`workflow_run_id`を返し、plan/revise-planでは新しい内容と同じrun IDを本文へ保存するため、既存planを読んだだけのstale COMPLETEや古いrun IDの流用はlauncherが拒否します。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記し、完了TASKを`progress.md`の`done`へ同期します。実装・修正stageの最終`COMPLETE`は、launcherが同梱runtimeの`task-gate`を実行し、TASK集合、`done`状態、attempt PASS、Markdown形式のSHA mapping、commit存在性とintegration `HEAD`到達性、未commitの非spec変更がないことのすべてを検証した場合だけ受理します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
+
+上記の`--add-dir`対象は共有root全体ではなく、`/tmp/vsdd-worktrees/.tasks/<slug>/`というrun専用TASK rootです。guardは直接file toolと通常のBash pathをintegration worktreeまたはこのroot内に制限し、別runのworktreeを自動許可しません。
 
 Phase 9はworkerの完了メッセージだけでは完了しません。`UserPromptSubmit` hookは、現在の1行の`start|resume ... --until pr`だけをsession ID・canonical cwd・prompt IDへ結び付け、次のユーザープロンプトで消去します。strict hookはその同意をPR worker起動時に一度だけ消費し、`VSDD_RUN_CONTEXT`とruntime preflightを検証します。`SubagentStart`はランダムcapabilityを実際のPR worker agent IDへ結び付けます。guardが観測できる直接commandと一般的なshell/interpreter wrapperでは、全workerの`git push`、`git send-pack`、`gh pr`/`gh api`変更操作を拒否します。PR workerは`pr-body.md`だけを作り、専用brokerが認可とpreflight、remote base、正確なintegration refを再検証してpush/PR作成・GitHub identity検証・`pr-result.json`保存を行います。current integration `HEAD`と一致するruntime snapshotが成功した場合だけPR phaseを完了にします。
 
@@ -193,12 +197,12 @@ ReviewまたはPRの証拠が揃った後も、同梱runtimeの`complete --reach
 
 ### Publication-ready判定
 
-unit/integration test、subprocessを含む全`scripts/*.py`それぞれのline coverage 80%以上、Python/JSON検証、`claude plugin validate --strict`、別々のOpus `xhigh` code/security release reviewに加え、新規marketplace installした同一RC artifactでexact `start ... --until pr`のReview・broker経由PR到達と、同意なし拒否の2つのE2Eを完走した時点をpublication-readyとします。Opus reviewのP0/P1判定は上記threat model内の通常・低コストな迂回を対象とし、OS sandboxでしか防げない任意binary内部の難読化をhook実装のrelease blockerにはしません。mock payload、dry-run、`--plugin-dir`だけでは公開可と判定しません。
+v1.0.0の公開判定は、unit/integration test、Python/JSON検証、`claude plugin validate --strict`、新規marketplace installした同一RC artifactによるexact `start ... --until review` E2Eで行います。E2Eは実装、独立Opus code/security review、必要なSonnet修正、fresh Opus再review、terminal `COMPLETE/review`までを必須とします。PR作成は明示的な外部操作境界であり、v1.0.0公開の必須E2Eには含めません。mock payload、dry-run、`--plugin-dir`だけでは公開可と判定しません。
 
 ## クイックスタート — フェーズを個別実行
 
 ```bash
-# 1. ステアリングをbootstrap（Opus xhigh。stale時のみ再実行）
+# 1. ステアリングをbootstrap（Opus xhigh。stack・規約変更時は --force で再実行）
 /vsdd-steering
 
 # 2. Open Questions を解消（grill or dismiss）

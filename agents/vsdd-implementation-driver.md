@@ -3,6 +3,7 @@ name: vsdd-implementation-driver
 description: Dedicated Sonnet session that plans and executes Phase 7 through Claude Code Dynamic Workflows.
 model: sonnet
 maxTurns: 200
+tools: Read, Grep, Glob, Bash, Write, Edit, Workflow
 skills:
   - ecc-vsdd:vsdd-impl
 ---

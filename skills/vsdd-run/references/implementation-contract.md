@@ -18,6 +18,8 @@ Record:
 - commit order and integration rules;
 - stopping conditions and retry policy.
 
+Create every TASK worktree under `/tmp/vsdd-worktrees/.tasks/<slug>/`. The launcher registers only that per-run root with `--add-dir` in the independent `claude -p` session. The launcher-bound global hook authorizes unattended local tools for the exact Sonnet session and rejects paths owned by another run as well as direct Git/GitHub outbound mutations.
+
 Pause after the planning workflow. A fresh Opus `xhigh` agent must review the file. Allow the initial review and at most two Sonnet plan revisions, for at most three Opus reviews. Block after the third failed review.
 
 ## Implementation stage
@@ -38,6 +40,8 @@ Before each TASK attempt, call the bundled runtime `begin-attempt --scope implem
 Require each implementation commit to name one `TASK-NNN`. Do not mix implementation for multiple TASKs in one commit. Allow integration commits to cite multiple TASKs. Record every TASK-to-SHA mapping in `implementation-ledger.md` under the exact heading `## TASK-to-SHA Mapping`.
 
 Before returning implementation or remediation `COMPLETE`, set every completed TASK row in `progress.md` to `done` with actual start and completion dates, then run bundled runtime command `task-gate --worktree <integration-worktree> --slug <slug>`. Require `status: READY`; treat any mismatch, unfinished attempt, missing/unreachable commit, or parser failure as `BLOCKED`.
+
+Do not leave product code, tests, configuration, or other non-spec files uncommitted. `task-gate` and every downstream review preflight reject uncommitted paths outside `.claude/specs/<slug>/` and `.claude/specs/_steering/`.
 
 ## Review remediation
 

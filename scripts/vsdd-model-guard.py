@@ -66,7 +66,24 @@ PR_CONSENT_TTL_SECONDS = 24 * 60 * 60
 ORCHESTRATOR_RELAY_TTL_SECONDS = 60 * 60
 PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
 PROJECT_AGENTS_READY_ENV = "ECC_VSDD_PROJECT_AGENTS_READY"
+IMPLEMENTATION_CAPABILITY_ENV = "ECC_VSDD_IMPLEMENTATION_CAPABILITY"
+IMPLEMENTATION_WORKTREE_ENV = "ECC_VSDD_IMPLEMENTATION_WORKTREE"
+IMPLEMENTATION_TASK_ROOT_ENV = "ECC_VSDD_IMPLEMENTATION_TASK_ROOT"
+IMPLEMENTATION_SLUG_ENV = "ECC_VSDD_IMPLEMENTATION_SLUG"
 MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
+IMPLEMENTATION_TOOLS = {
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash",
+    "Workflow",
+    "TodoWrite",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+}
 VSDD_ENTRY_POINTS = {
     "vsdd-run",
     "vsdd-steering",
@@ -1001,6 +1018,7 @@ def clear_session_state(payload: dict) -> None:
         pr_authorization_record_path,
         pr_consent_record_path,
         session_record_path,
+        implementation_record_path,
         materialized_agents_record_path,
         orchestrator_relay_record_path,
     ):
@@ -1016,6 +1034,7 @@ def sweep_expired_session_state() -> None:
         "pr-authorized-sessions",
         "pr-consent-sessions",
         "session-models",
+        "implementation-sessions",
         "materialized-agent-sessions",
         "orchestrator-relay-sessions",
     ):
@@ -1252,6 +1271,184 @@ def session_record_path(session_id: object) -> Path | None:
     if not safe_id:
         return None
     return guard_runtime_root() / "session-models" / f"{safe_id}.json"
+
+
+def implementation_record_path(session_id: object) -> Path | None:
+    safe_id = re.sub(r"[^a-zA-Z0-9-]", "", str(session_id or ""))
+    if not safe_id:
+        return None
+    return guard_runtime_root() / "implementation-sessions" / f"{safe_id}.json"
+
+
+def authorize_implementation_session(payload: dict) -> None:
+    capability = os.environ.get(IMPLEMENTATION_CAPABILITY_ENV, "").strip()
+    if not capability:
+        return
+    slug = os.environ.get(IMPLEMENTATION_SLUG_ENV, "").strip()
+    raw_worktree = os.environ.get(IMPLEMENTATION_WORKTREE_ENV, "").strip()
+    raw_task_root = os.environ.get(IMPLEMENTATION_TASK_ROOT_ENV, "").strip()
+    cwd = normalized_cwd(payload)
+    path = implementation_record_path(payload.get("session_id"))
+    expected = (MANAGED_WORKTREE_ROOT / slug).resolve() if SLUG_RE.fullmatch(slug) else None
+    try:
+        worktree = Path(raw_worktree).resolve()
+        task_root = Path(raw_task_root).resolve()
+    except OSError:
+        worktree = Path()
+        task_root = Path()
+    expected_task_root = (
+        MANAGED_WORKTREE_ROOT / ".tasks" / slug
+    ).resolve() if SLUG_RE.fullmatch(slug) else None
+    if not (
+        normalized_agent(payload.get("agent_type"))
+        == "ecc-vsdd:vsdd-implementation-driver"
+        and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", capability)
+        and expected is not None
+        and worktree == expected
+        and expected_task_root is not None
+        and task_root == expected_task_root
+        and task_root.is_dir()
+        and cwd == str(worktree)
+        and path is not None
+        and os.environ.get("CLAUDE_CODE_SUBAGENT_MODEL", "").lower() == "sonnet"
+    ):
+        deny("implementation session launch context is invalid")
+    write_private_json(
+        path,
+        {
+            "schema_version": 1,
+            "authorization": "vsdd-implementation",
+            "session_id": safe_session_id(payload.get("session_id")),
+            "cwd": cwd,
+            "slug": slug,
+            "integration_worktree": str(worktree),
+            "task_worktree_root": str(task_root),
+            "capability": capability,
+            "created_at": int(time.time()),
+        },
+    )
+
+
+def implementation_session_authorized(payload: dict) -> bool:
+    capability = os.environ.get(IMPLEMENTATION_CAPABILITY_ENV, "").strip()
+    path = implementation_record_path(payload.get("session_id"))
+    record = read_private_json(path) if path is not None else None
+    if record is None:
+        return False
+    created_at = record.get("created_at")
+    age = time.time() - created_at if isinstance(created_at, int) else -1
+    slug = str(record.get("slug") or "")
+    expected = (MANAGED_WORKTREE_ROOT / slug).resolve() if SLUG_RE.fullmatch(slug) else None
+    expected_task_root = (
+        MANAGED_WORKTREE_ROOT / ".tasks" / slug
+    ).resolve() if SLUG_RE.fullmatch(slug) else None
+    current_cwd = normalized_cwd(payload)
+    current_path = Path(current_cwd).resolve() if current_cwd else None
+    recorded_task_root = Path(str(record.get("task_worktree_root") or "")).resolve()
+    return bool(
+        re.fullmatch(r"[A-Za-z0-9_-]{32,128}", capability)
+        and record.get("schema_version") == 1
+        and record.get("authorization") == "vsdd-implementation"
+        and record.get("session_id") == safe_session_id(payload.get("session_id"))
+        and record.get("cwd") == str(expected)
+        and expected is not None
+        and Path(str(record.get("integration_worktree") or "")).resolve() == expected
+        and expected_task_root is not None
+        and recorded_task_root == expected_task_root
+        and os.environ.get(IMPLEMENTATION_TASK_ROOT_ENV, "").strip()
+        and Path(os.environ[IMPLEMENTATION_TASK_ROOT_ENV]).resolve() == expected_task_root
+        and current_path is not None
+        and (
+            current_path == expected
+            or current_path == expected_task_root
+            or expected_task_root in current_path.parents
+        )
+        and secrets.compare_digest(str(record.get("capability") or ""), capability)
+        and os.environ.get("CLAUDE_CODE_SUBAGENT_MODEL", "").lower() == "sonnet"
+        and 0 <= age <= AUTHORIZATION_TTL_SECONDS
+    )
+
+
+def implementation_allowed_roots(payload: dict) -> tuple[Path, Path]:
+    slug = os.environ.get(IMPLEMENTATION_SLUG_ENV, "").strip()
+    if not SLUG_RE.fullmatch(slug):
+        deny("implementation session slug is invalid")
+    return (
+        (MANAGED_WORKTREE_ROOT / slug).resolve(),
+        (MANAGED_WORKTREE_ROOT / ".tasks" / slug).resolve(),
+    )
+
+
+def path_within(path: Path, roots: tuple[Path, ...]) -> bool:
+    resolved = path.resolve()
+    return any(resolved == root or root in resolved.parents for root in roots)
+
+
+def check_implementation_bash_paths(
+    command: str,
+    cwd: Path,
+    roots: tuple[Path, ...],
+    *,
+    depth: int = 0,
+) -> None:
+    if depth > 4:
+        deny("nested implementation Bash path depth is not safely classifiable")
+    managed_root = MANAGED_WORKTREE_ROOT.resolve()
+    for segment in shell_segments(command):
+        tokens = executable_tokens(segment)
+        if not tokens:
+            continue
+        for token in tokens:
+            candidate_text = token.lstrip("<>&")
+            if "=" in candidate_text:
+                candidate_text = candidate_text.split("=", 1)[1]
+            if not candidate_text.startswith(("/", "./", "../")):
+                continue
+            candidate = Path(candidate_text).expanduser()
+            if not candidate.is_absolute():
+                candidate = cwd / candidate
+            resolved = candidate.resolve()
+            if (
+                resolved == managed_root or managed_root in resolved.parents
+            ) and not path_within(resolved, roots):
+                deny(
+                    "implementation Bash path escapes its run: "
+                    f"{candidate_text!r}"
+                )
+        executable = Path(tokens[0]).name
+        payload = interpreter_payload(tokens, executable)
+        if executable in SHELL_INTERPRETERS and payload is not None:
+            check_implementation_bash_paths(
+                payload,
+                cwd,
+                roots,
+                depth=depth + 1,
+            )
+
+
+def check_implementation_tool(payload: dict, tool_name: str, tool_input: dict) -> None:
+    if tool_name not in IMPLEMENTATION_TOOLS:
+        deny(f"implementation session cannot use {tool_name!r}")
+    roots = implementation_allowed_roots(payload)
+    cwd = Path(normalized_cwd(payload) or roots[0]).resolve()
+    for field in ("file_path", "path", "notebook_path"):
+        value = tool_input.get(field)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        if not path_within(candidate, roots):
+            deny(f"implementation {tool_name} path escapes its run: {value!r}")
+    if tool_name == "Bash":
+        command = str(tool_input.get("command") or "")
+        mutation = external_mutation_reason(command)
+        if mutation:
+            deny(
+                "implementation session external Git/GitHub mutation is prohibited "
+                f"({mutation})"
+            )
+        check_implementation_bash_paths(command, cwd, roots)
 
 
 def record_session_model(payload: dict) -> None:
@@ -2002,6 +2199,7 @@ def check_launcher(command: object) -> None:
     }
     index = 3
     seen: set[str] = set()
+    values: dict[str, str] = {}
     while index < len(argv):
         flag = argv[index]
         if flag not in allowed_flags or flag in seen:
@@ -2012,9 +2210,17 @@ def check_launcher(command: object) -> None:
             continue
         if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
             deny(f"missing value for VSDD launcher argument {flag!r}")
+        values[flag] = argv[index + 1]
         index += 2
     if not {"--slug", "--worktree"}.issubset(seen):
         deny("VSDD launcher requires --slug and --worktree")
+    slug = values.get("--slug", "")
+    if not SLUG_RE.fullmatch(slug):
+        deny("VSDD launcher slug must be lowercase kebab-case")
+    worktree = Path(values.get("--worktree", ""))
+    expected_worktree = (MANAGED_WORKTREE_ROOT / slug).resolve()
+    if not worktree.is_absolute() or worktree.resolve() != expected_worktree:
+        deny(f"VSDD launcher worktree must be exactly {expected_worktree}")
     if stage == "wait":
         if "--evidence" not in seen:
             deny("VSDD launcher wait requires --evidence")
@@ -2065,6 +2271,7 @@ def main() -> None:
     if session_start:
         sweep_expired_session_state()
         record_session_model(payload)
+        authorize_implementation_session(payload)
         return
     if session_end:
         clear_session_state(payload)
@@ -2080,6 +2287,12 @@ def main() -> None:
     agent_type = normalized_agent(raw_agent_type)
     tool_name = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input") or {}
+    implementation_authorized = implementation_session_authorized(payload)
+
+    if agent_type not in EXPECTED_EFFORT and implementation_authorized:
+        check_implementation_tool(payload, tool_name, tool_input)
+        allow_validated_tool(True)
+        return
 
     if agent_type in WORKERS:
         if project_agent:
@@ -2097,6 +2310,10 @@ def main() -> None:
             allow_unobservable=agent_type
             != "ecc-vsdd:vsdd-implementation-driver",
         )
+        if agent_type == "ecc-vsdd:vsdd-implementation-driver":
+            if not implementation_authorized:
+                deny("implementation driver lacks launcher-bound authorization")
+            check_implementation_tool(payload, tool_name, tool_input)
         if tool_name == "Bash":
             boundary_operation = pr_boundary_operation(tool_input.get("command"))
             if boundary_operation is not None:
@@ -2126,7 +2343,9 @@ def main() -> None:
                 record = check_pr_worker_tool(payload)
                 if broker_fields is not None:
                     check_pr_broker_context(payload, broker_fields, record)
-        allow_validated_tool(strict or strict_session_authorized(payload))
+        allow_validated_tool(
+            strict or strict_session_authorized(payload) or implementation_authorized
+        )
         return
 
     if agent_type not in EXPECTED_EFFORT and not strict:

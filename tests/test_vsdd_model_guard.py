@@ -1067,15 +1067,23 @@ class ModelGuardTest(unittest.TestCase):
 
     def test_orchestrator_allows_detached_launcher_poll_protocol(self) -> None:
         launcher_path = ROOT / "scripts" / "vsdd-launch-worker.py"
+        worktree = guard.MANAGED_WORKTREE_ROOT / "sample"
+        evidence = (
+            worktree
+            / ".claude"
+            / "specs"
+            / "sample"
+            / "worker-supervisors"
+            / "plan-abc.json"
+        )
         commands = [
             (
                 f'python3 "{launcher_path}" plan --slug sample '
-                "--worktree /tmp/sample --detach"
+                f'--worktree "{worktree}" --detach'
             ),
             (
                 f'python3 "{launcher_path}" wait --slug sample '
-                "--worktree /tmp/sample --evidence "
-                "/tmp/sample/.claude/specs/sample/worker-supervisors/plan-abc.json "
+                f'--worktree "{worktree}" --evidence "{evidence}" '
                 "--wait-seconds 45"
             ),
         ]
@@ -1874,27 +1882,77 @@ class ModelGuardTest(unittest.TestCase):
 
     def test_ultracode_main_session_uses_launcher_effort_not_frontmatter(self) -> None:
         data_root = tempfile.mkdtemp(prefix="ecc-vsdd-ultracode-record-")
+        worktree = (guard.MANAGED_WORKTREE_ROOT / "sample").resolve()
+        task_root = (guard.MANAGED_WORKTREE_ROOT / ".tasks" / "sample").resolve()
+        task_root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(task_root.rmdir)
+        capability = "A" * 43
+        launcher_environment = {
+            guard.IMPLEMENTATION_CAPABILITY_ENV: capability,
+            guard.IMPLEMENTATION_WORKTREE_ENV: str(worktree),
+            guard.IMPLEMENTATION_TASK_ROOT_ENV: str(task_root),
+            guard.IMPLEMENTATION_SLUG_ENV: "sample",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+        }
         session_start = {
             "hook_event_name": "SessionStart",
             "agent_type": "ecc-vsdd:vsdd-implementation-driver",
             "session_id": "implementation-session",
             "model": "claude-sonnet-5",
+            "cwd": str(worktree),
         }
         recorded = self.run_guard(
-            session_start, "--session-start", data_root=data_root
+            session_start,
+            "--session-start",
+            data_root=data_root,
+            **launcher_environment,
         )
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
 
         payload = {
             "agent_type": "ecc-vsdd:vsdd-implementation-driver",
             "session_id": "implementation-session",
+            "cwd": str(worktree),
             "effort": {"level": "xhigh"},
             "tool_name": "Read",
             "tool_input": {},
         }
-        result = self.run_guard(payload, data_root=data_root)
+        result = self.run_guard(
+            payload, data_root=data_root, **launcher_environment
+        )
 
         self.assert_strict_allow(result)
+
+        payload["tool_name"] = "Write"
+        payload["tool_input"] = {
+            "file_path": str(guard.MANAGED_WORKTREE_ROOT / "another-run" / "file.py"),
+            "content": "forbidden\n",
+        }
+        escaped_write = self.run_guard(
+            payload, data_root=data_root, **launcher_environment
+        )
+        self.assertEqual(escaped_write.returncode, 2)
+        self.assertIn("path escapes its run", escaped_write.stderr)
+
+        payload["tool_name"] = "Bash"
+        payload["tool_input"] = {"command": "git -C ../another-run status"}
+        escaped_bash = self.run_guard(
+            payload, data_root=data_root, **launcher_environment
+        )
+        self.assertEqual(escaped_bash.returncode, 2)
+        self.assertIn("Bash path escapes its run", escaped_bash.stderr)
+
+        payload["tool_input"] = {
+            "command": (
+                "bash -c 'printf x > "
+                "/tmp/vsdd-worktrees/another-run/wrapped.txt'"
+            )
+        }
+        wrapped_escape = self.run_guard(
+            payload, data_root=data_root, **launcher_environment
+        )
+        self.assertEqual(wrapped_escape.returncode, 2)
+        self.assertIn("Bash path escapes its run", wrapped_escape.stderr)
 
 
 if __name__ == "__main__":

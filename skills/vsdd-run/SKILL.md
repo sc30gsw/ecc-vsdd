@@ -1,7 +1,7 @@
 ---
 name: vsdd-run
 description: This skill should be used when the user asks to start, resume, inspect, cancel, clean up, or fully automate the complete ecc-vsdd workflow with pinned Claude models, Dynamic Workflow implementation, independent Opus reviews, validation gates, and pull request creation.
-version: 1.0.0-rc.11
+version: 1.0.0
 argument-hint: start <request-or-slug> [source] [--mode auto|standard] [--base ref] [--until review|pr] | resume <slug> [source] [--until pr] | status|cancel|cleanup <slug>
 disable-model-invocation: true
 hooks:
@@ -97,8 +97,8 @@ Use only persisted artifacts and fixed verdict fields to choose transitions. Pre
 
 | Order | Phase | Fresh pinned agent | Completion gate |
 | --- | --- | --- | --- |
-| 0 | Steering | `vsdd-steering-worker` | required files exist, contain no unresolved blocking decision, record reversible assumptions, and repository fingerprint is current |
-| 1 | Init | `vsdd-init-worker` | consume the exact managed bootstrap, create the spec skeleton and mode, snapshot Init, and set `bootstrap_status: CONSUMED` |
+| 0 | Steering | `vsdd-steering-worker` | required files exist, their saved hashes match, and no unresolved Open/DRAFT/Glossary decision remains |
+| 1 | Init | `vsdd-init-worker` | consume the exact managed bootstrap, persist and hash initial source input, create the spec skeleton/mode, snapshot Init, and set `bootstrap_status: CONSUMED` |
 | 2 | Requirements | `vsdd-requirements-worker` | EARS `REQ-NNN` blocks and acceptance criteria exist |
 | 3 | Requirements review | `vsdd-requirements-reviewer` | structured `verdict: PASS` |
 | 4 | Design | `vsdd-design-worker` | design satisfies every approved REQ and steering viewpoint |
@@ -114,7 +114,7 @@ Use only persisted artifacts and fixed verdict fields to choose transitions. Pre
 
 For each Requirements, Plan, and Implementation Workflow review, have the Status worker run `begin-attempt` with that phase scope before launching Opus. For each paired Code/Security round, run it once with scope `post-implementation-review` and pass the same returned number to both fresh Opus agents. Never accept a self-selected attempt number.
 
-Run Steering only when `_steering/` is missing or its repository fingerprint is stale. Otherwise record reuse with validated hashes. Even when Steering is reused, deterministic preflight must reject every remaining Open question, DRAFT marker, or Glossary-pending marker before downstream work. Phase 6 already reviews Requirements, Design, and Tasks together; never move it before Tasks.
+Run Steering automatically when `_steering/` is missing. Otherwise record reuse only after validating saved hashes and decision markers. Repository stack, convention, or verification-command changes require an explicit Steering `--force` refresh; do not claim automatic repository-fingerprint detection. Even when Steering is reused, deterministic preflight must reject every remaining Open question, DRAFT marker, or Glossary-pending marker before downstream work. Phase 6 already reviews Requirements, Design, and Tasks together; never move it before Tasks.
 
 During `start` or `resume`, `execution_mode: unattended` disables every phase-local interview, `WAITING FOR CONFIRMATION`, `CONFIRM ...`, approval prompt, and overwrite question. Workers derive routine answers from persisted source evidence. This never overrides the unattended decision boundary or a `BLOCKED` verdict.
 
@@ -153,7 +153,7 @@ Invoke every start and wait command in the foreground (`run_in_background: false
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-launch-worker.py" implement --slug <slug> --worktree <absolute-integration-worktree> --session-id <id> --detach
 ```
 
-For plan revisions use `revise-plan --detach` with the same session ID and poll its returned evidence. The launcher pins the main session and every workflow agent to Sonnet, sets `--effort ultracode`, omits fallback models, and blocks when workflows are disabled.
+For plan revisions use `revise-plan --detach` with the same session ID and poll its returned evidence. The launcher pins the main session and every workflow agent to Sonnet, sets `--effort ultracode`, omits fallback models, registers only `/tmp/vsdd-worktrees/.tasks/<slug>` with `--add-dir`, and blocks when workflows are disabled. Every TASK worktree chosen by the Dynamic Workflow must remain under that per-run root. A launcher-bound session capability lets the global hook approve unattended local implementation tools while rejecting other runs' paths, direct push, and GitHub mutations.
 
 Apply the TASK retry and traceability rules in the implementation contract. Do not let Fable or Opus take over implementation after a failure.
 
