@@ -277,7 +277,7 @@ Every contributing-factor row in the score tables must carry a Confidence tag, s
 ```markdown
 ## 📊 Review Attention Score
 
-**Total: 🔴 High** (78 risk pts — higher = reviewers need to focus more)  
+**Total: 🔴 High** (78 risk pts — higher = reviewers need to focus more)
 Weighted average of Risk + Influence + Complexity. Does NOT include Simplicity.
 
 | Axis       | Axis score | Contributing factors (Confidence)                                                                      |
@@ -302,7 +302,7 @@ Signal quality（シグナル品質）:
 
 ## 🧹 Cleanup Burden (separate, not in Total)
 
-**🔴 High** (75 cleanup pts — higher = more to clean up)  
+**🔴 High** (75 cleanup pts — higher = more to clean up)
 `/code-review` perspective. 0 = nothing to do, 100 = heavy cleanup recommended.
 
 | Lens                  | Contribution | Where (Confidence)                                                                                      |

@@ -132,7 +132,7 @@ Satisfies: <!-- cross-cutting concern, no direct REQ -->
 
 ## Phase Gate
 
-**Next skill after design is always `vsdd-tasks`, never `vsdd-review-plan`.**  
+**Next skill after design is always `vsdd-tasks`, never `vsdd-review-plan`.**
 `vsdd-review-plan` requires `tasks.md` and runs only after `/vsdd-tasks`.
 
 Use the same gate for the initial write and for any later revision to `design.md`.
