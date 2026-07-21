@@ -16,11 +16,11 @@ Delegate each review attempt to a new `vsdd-plan-reviewer` (Opus, `xhigh`) with 
 
 ## Prerequisites
 
-- `.claude/specs/<slug>/requirements.md` must exist
-- `.claude/specs/<slug>/design.md` must exist
-- `.claude/specs/<slug>/tasks.md` must exist
-- `.claude/specs/<slug>/progress.md` must exist (used to read `mode`)
-- `.claude/specs/<slug>/review-results/requirement-review.md` must exist (created by `vsdd-review-requirements`). If missing, abort: "Run `/vsdd-review-requirements <slug>` first."
+- `.vsdd/specs/<slug>/requirements.md` must exist
+- `.vsdd/specs/<slug>/design.md` must exist
+- `.vsdd/specs/<slug>/tasks.md` must exist
+- `.vsdd/specs/<slug>/progress.md` must exist (used to read `mode`)
+- `.vsdd/specs/<slug>/review-results/requirement-review.md` must exist (created by `vsdd-review-requirements`). If missing, abort: "Run `/vsdd-review-requirements <slug>` first."
 - The set of every `TASK-NNN` heading in `tasks.md` must exactly equal the set of TASK rows in the `progress.md` Tasks table. Duplicate, missing, or extra IDs are a blocking traceability failure. In an orchestrated run, require the Status worker's deterministic `plan-review` preflight before launching this reviewer.
 
 ---
@@ -30,12 +30,12 @@ Delegate each review attempt to a new `vsdd-plan-reviewer` (Opus, `xhigh`) with 
 ### 1. Read all spec inputs
 
 ```
-.claude/specs/<slug>/requirements.md
-.claude/specs/<slug>/design.md
-.claude/specs/<slug>/tasks.md
-.claude/specs/<slug>/progress.md    (read mode: standard | auto)
-.claude/specs/<slug>/review-results/requirement-review.md  (required — abort if missing)
-.claude/specs/_steering/tech.md     (read §2 Design Viewpoints for Check I)
+.vsdd/specs/<slug>/requirements.md
+.vsdd/specs/<slug>/design.md
+.vsdd/specs/<slug>/tasks.md
+.vsdd/specs/<slug>/progress.md    (read mode: standard | auto)
+.vsdd/specs/<slug>/review-results/requirement-review.md  (required — abort if missing)
+.vsdd/specs/_steering/tech.md     (read §2 Design Viewpoints for Check I)
 ```
 
 Build three indexes in memory:
@@ -123,7 +123,7 @@ Failure example:
 
 Every file path referenced in `design.md` File Structure Plan either:
 
-- exists under an existing feature listed in `.claude/specs/_steering/structure.md`, OR
+- exists under an existing feature listed in `.vsdd/specs/_steering/structure.md`, OR
 - is justified in the design as a new feature with a one-line responsibility note.
 
 Failure example:
@@ -146,7 +146,7 @@ Failure example:
 
 #### Check I — Viewpoint coverage
 
-Every Design Viewpoint listed in `.claude/specs/_steering/tech.md` §2 has a corresponding section in design.md.
+Every Design Viewpoint listed in `.vsdd/specs/_steering/tech.md` §2 has a corresponding section in design.md.
 
 Failure example:
 
@@ -157,11 +157,11 @@ Failure example:
 
 If `tech.md` has no §2 Design Viewpoints section (old format), record Check I as ⚠️ skipped and recommend re-running `/vsdd-steering`.
 
-If `.claude/specs/_steering/structure.md` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
+If `.vsdd/specs/_steering/structure.md` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
 
 ### 3. Write Traceability Coherence table to `review-results/plan-review.md`
 
-Write to `.claude/specs/<slug>/review-results/plan-review.md`:
+Write to `.vsdd/specs/<slug>/review-results/plan-review.md`:
 
 ```markdown
 ---
@@ -259,7 +259,7 @@ All CRITICAL/HIGH findings and every failed A–I check must be resolved before 
 ## Output
 
 ```
-.claude/specs/<slug>/review-results/plan-review.md    (created or overwritten)
+.vsdd/specs/<slug>/review-results/plan-review.md    (created or overwritten)
 ```
 
 ---
@@ -268,7 +268,7 @@ All CRITICAL/HIGH findings and every failed A–I check must be resolved before 
 
 After writing plan-review.md, set `vsdd-review-plan` to `✅ complete` only for `verdict: PASS`; otherwise record `🔄 revise` or `⛔ blocked` with the attempt number.
 
-Append to `.claude/specs/<slug>/change-log.md`:
+Append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-review-plan | plan-review.md 作成 (Traceability: ✅/⚠️, <N> findings) |
@@ -282,7 +282,7 @@ Only output this block when all A–I traceability checks are ✅, CRITICAL/HIGH
 
 ```
 == PHASE COMPLETE: vsdd-review-plan ==
-Artifact: .claude/specs/<slug>/review-results/plan-review.md
+Artifact: .vsdd/specs/<slug>/review-results/plan-review.md
 Summary:
 - All traceability coherence checks passed (A–I)
 - Plan reviewed by a fresh independent Opus xhigh reviewer

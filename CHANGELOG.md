@@ -4,6 +4,7 @@
 
 ## [1.0.0] - 2026-07-21
 
+- VSDD成果物をClaude Codeのprotected pathである`.claude/specs/`からplugin-ownedな`.vsdd/specs/`へ移し、危険な`bypassPermissions`なしで無人workerが成果物を永続化できるよう修正。
 - managed integration worktree pathをruntime/launcherで機械的に固定し、Phase 7の独立sessionにはrun専用TASK rootだけを`--add-dir`で登録。
 - launcher-boundな実装session認可によりDynamic Workflowのlocal toolを無人許可しつつ、指定外workflow workerを含む直接push/GitHub mutationを拒否。
 - Code/Security review前に未commitの非spec変更を拒否し、review対象commit外の実装が完了扱いになる経路を除去。

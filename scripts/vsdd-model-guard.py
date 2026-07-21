@@ -1600,7 +1600,7 @@ def check_pr_launch(payload: dict, tool_input: dict) -> None:
     if not worktree.is_absolute() or not worktree.is_dir():
         deny("PR worker launch requires an existing absolute integration worktree")
     worktree = worktree.resolve()
-    expected_state = worktree / ".claude" / "specs" / slug / "run-state.json"
+    expected_state = worktree / ".vsdd" / "specs" / slug / "run-state.json"
     state_path = Path(raw_state)
     if not state_path.is_absolute() or state_path.resolve() != expected_state:
         deny("PR worker launch run_state does not match its slug and worktree")

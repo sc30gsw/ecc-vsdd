@@ -29,12 +29,12 @@ The `ecc-vsdd:vsdd-implementation-driver` agent executes inside that independent
 
 Require:
 
-- `.claude/specs/<slug>/requirements.md`;
-- `.claude/specs/<slug>/design.md`;
-- `.claude/specs/<slug>/tasks.md` with at least one `TASK-NNN`;
+- `.vsdd/specs/<slug>/requirements.md`;
+- `.vsdd/specs/<slug>/design.md`;
+- `.vsdd/specs/<slug>/tasks.md` with at least one `TASK-NNN`;
 - exact, duplicate-free equality between all `tasks.md` TASK headings and all `progress.md` Tasks rows; require deterministic `plan-review` preflight for managed runs;
-- `.claude/specs/<slug>/review-results/plan-review.md` with `verdict: PASS` and no failed A–I check;
-- `.claude/specs/_steering/tech.md` with §3 conventions and §4 verification commands;
+- `.vsdd/specs/<slug>/review-results/plan-review.md` with `verdict: PASS` and no failed A–I check;
+- `.vsdd/specs/_steering/tech.md` with §3 conventions and §4 verification commands;
 - a dedicated integration worktree and non-base integration branch;
 - Claude Code 2.1.214 or later with Dynamic Workflows enabled.
 
@@ -51,7 +51,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-launch-worker.py" plan --slug <slug>
 The Sonnet ultracode session must create and run a Dynamic Workflow that reads all approved tasks and writes only:
 
 ```text
-.claude/specs/<slug>/implementation-workflow.md
+.vsdd/specs/<slug>/implementation-workflow.md
 ```
 
 Require the artifact to record the inferred TASK DAG, parallel groups, worktree assignments, validation commands, Red → Green → Refactor checkpoints, commit/integration order, stop conditions, and retry policy. Do not change code during this stage. Persist the returned session ID.
@@ -61,7 +61,7 @@ Require the artifact to record the inferred TASK DAG, parallel groups, worktree 
 Launch a new `vsdd-implementation-workflow-reviewer` (Opus, `xhigh`) with disk-only context. It writes:
 
 ```text
-.claude/specs/<slug>/review-results/implementation-workflow-review.md
+.vsdd/specs/<slug>/review-results/implementation-workflow-review.md
 ```
 
 Use the structured review contract. On `REVISE`, resume the same Sonnet session with launcher stage `revise-plan`, then use a new Opus reviewer. Allow at most three Opus reviews total. On the third failure, block without Fable repair or waiver.

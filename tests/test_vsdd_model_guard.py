@@ -103,7 +103,7 @@ class ModelGuardTest(unittest.TestCase):
         (plugin_root / "agents").mkdir(parents=True)
         (plugin_root / "scripts").mkdir()
         worktree.mkdir()
-        run_state = worktree / ".claude" / "specs" / "sample" / "run-state.json"
+        run_state = worktree / ".vsdd" / "specs" / "sample" / "run-state.json"
         run_state.parent.mkdir(parents=True)
         run_state.write_text("{}\n", encoding="utf-8")
         for source in (ROOT / "agents").glob("*.md"):

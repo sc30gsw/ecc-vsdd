@@ -58,7 +58,7 @@ class LaunchWorkerTest(unittest.TestCase):
             "-m",
             "fixture",
         )
-        spec = root / ".claude" / "specs" / "sample"
+        spec = root / ".vsdd" / "specs" / "sample"
         spec.mkdir(parents=True)
         (spec / "tasks.md").write_text(
             "<!-- Artifact not yet generated. Run the corresponding vsdd-* skill. -->\n",
@@ -315,7 +315,7 @@ class LaunchWorkerTest(unittest.TestCase):
 
     def test_wait_helper_validates_and_reports_every_terminal_shape(self) -> None:
         worktree = Path(tempfile.mkdtemp(prefix="ecc-vsdd-wait-helper-")).resolve()
-        supervisors = worktree / ".claude/specs/sample/worker-supervisors"
+        supervisors = worktree / ".vsdd/specs/sample/worker-supervisors"
         supervisors.mkdir(parents=True)
         evidence = supervisors / "plan-run.json"
 
@@ -541,7 +541,7 @@ class LaunchWorkerTest(unittest.TestCase):
 
     def test_detached_plan_can_be_polled_to_completion_and_binds_session(self) -> None:
         root, spec = self.make_repo()
-        steering = root / ".claude" / "specs" / "_steering"
+        steering = root / ".vsdd" / "specs" / "_steering"
         steering.mkdir()
         for name in ("tech.md", "structure.md", "context.md"):
             (steering / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -598,7 +598,7 @@ class LaunchWorkerTest(unittest.TestCase):
             "    raise SystemExit(0)\n"
             "session_id = sys.argv[sys.argv.index('--session-id') + 1]\n"
             "time.sleep(0.2)\n"
-            "path = Path('.claude/specs/sample/implementation-workflow.md')\n"
+            "path = Path('.vsdd/specs/sample/implementation-workflow.md')\n"
             "path.write_text('# Approved workflow candidate\\n\\nWorkflow: wf_test-plan\\n', encoding='utf-8')\n"
             "print(json.dumps({'session_id': session_id, 'structured_output': "
             "{'status': 'COMPLETE', 'stage': 'plan', 'summary': 'planned', "

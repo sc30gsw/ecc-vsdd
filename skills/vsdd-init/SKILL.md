@@ -30,7 +30,7 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, do not ask questions 
 
 ## Purpose
 
-Initialize a spec directory for a new feature under `.claude/specs/<slug>/`. This is always the first step in the VSDD workflow. It creates the directory structure, optionally fetches a Notion page as source material, and records the chosen mode in `progress.md`.
+Initialize a spec directory for a new feature under `.vsdd/specs/<slug>/`. This is always the first step in the VSDD workflow. It creates the directory structure, optionally fetches a Notion page as source material, and records the chosen mode in `progress.md`.
 
 ---
 
@@ -54,12 +54,12 @@ For all remaining steps require `operation: phase` with `phase: init`, or `opera
 
 ### Step 0: Validate the Steering gate
 
-Do not generate or refresh Steering in the Haiku Init worker. Require the Opus Steering worker to have produced `.claude/specs/_steering/` artifacts whose saved hashes and decision markers pass deterministic preflight. Read the `⚠ NEW OPEN QUESTIONS: <count>` state from its persisted output.
+Do not generate or refresh Steering in the Haiku Init worker. Require the Opus Steering worker to have produced `.vsdd/specs/_steering/` artifacts whose saved hashes and decision markers pass deterministic preflight. Read the `⚠ NEW OPEN QUESTIONS: <count>` state from its persisted output.
 
 **Gate**:
 
 - `count == 0` → continue to Step 1.
-- Standalone invocation with `count >= 1` → STOP. Present new `Q-XXX` entries from `.claude/specs/_steering/open-questions.md` and ask the user to either grill them (run `/grill-with-docs` or resolve manually) or explicitly type `dismiss <Q-id>` to acknowledge and proceed.
+- Standalone invocation with `count >= 1` → STOP. Present new `Q-XXX` entries from `.vsdd/specs/_steering/open-questions.md` and ask the user to either grill them (run `/grill-with-docs` or resolve manually) or explicitly type `dismiss <Q-id>` to acknowledge and proceed.
 - Orchestrated `vsdd-run` with `count >= 1` → classify each question using the unattended decision boundary. Record reversible technical assumptions and continue; STOP only for unresolved product behavior, data loss, security, compatibility, destructive operations, or external authority.
 
 If Steering is missing, its saved hash changed, or its decision markers fail, return `BLOCKED` and require the caller to launch `vsdd-steering-worker`. A repository stack/convention change requires an explicit `--force` refresh. This guarantees coherence without letting Haiku author Steering.
@@ -76,10 +76,10 @@ When `--update-source` is set, require an existing spec and skip Steps 2 and 4 e
 
 ### Step 2: Create directory structure
 
-Create the following empty directories and files under `.claude/specs/<slug>/`:
+Create the following empty directories and files under `.vsdd/specs/<slug>/`:
 
 ```
-.claude/specs/<slug>/
+.vsdd/specs/<slug>/
 ├── review-results/      ← subdirectory for review output files
 ├── progress.md          ← created in this step
 ├── change-log.md        ← created in this step
@@ -91,7 +91,7 @@ Create the following empty directories and files under `.claude/specs/<slug>/`:
 Run:
 
 ```bash
-mkdir -p .claude/specs/<slug>/review-results/
+mkdir -p .vsdd/specs/<slug>/review-results/
 ```
 
 Write placeholder files with a single comment line:
@@ -106,10 +106,10 @@ If a Notion URL is given:
 
 1. Extract the page ID from the URL (last 32-character hex segment, with or without hyphens).
 2. Call `mcp__claude_ai_Notion__notion-fetch` with the page ID.
-3. Write the raw Markdown content to `.claude/specs/<slug>/source-notion.md`.
+3. Write the raw Markdown content to `.vsdd/specs/<slug>/source-notion.md`.
 4. If the fetch fails, return `VSDD RUN BLOCKED`; never continue after an explicitly requested external source failed.
 
-If a source file or detailed brief is given, persist its normalized content to `.claude/specs/<slug>/source-request.md`. If no source is given during a new unattended run, require the request already persisted in `run-state.json` to be sufficiently detailed; otherwise block.
+If a source file or detailed brief is given, persist its normalized content to `.vsdd/specs/<slug>/source-request.md`. If no source is given during a new unattended run, require the request already persisted in `run-state.json` to be sufficiently detailed; otherwise block.
 
 For `--update-source`, update `**Source**:` in `progress.md`, update `request` and `source_paths` in `run-state.json`, invalidate from Requirements, then snapshot phase `source` using the bundled runtime commands. Stop after this update so Resume can restart at Requirements.
 
@@ -117,7 +117,7 @@ For a new run, the Init checkpoint must snapshot the persisted `source-notion.md
 
 ### Step 4: Write progress.md and change-log.md
 
-Write `.claude/specs/<slug>/progress.md` with the following structure:
+Write `.vsdd/specs/<slug>/progress.md` with the following structure:
 
 ```markdown
 # Spec Progress: <slug>
@@ -164,7 +164,7 @@ Write `.claude/specs/<slug>/progress.md` with the following structure:
 | `change-log.md`                        | Phase completion event log             |
 ```
 
-Write `.claude/specs/<slug>/change-log.md` with the following structure:
+Write `.vsdd/specs/<slug>/change-log.md` with the following structure:
 
 ```markdown
 # Change Log: <slug>
@@ -200,16 +200,16 @@ Print a summary of what was created, including:
 ## Notes
 
 - The `progress.md` file is the single source of truth for the mode. Subsequent skills MUST read mode from `progress.md` rather than accepting a `--mode` flag themselves.
-- If `.claude/specs/<slug>/` already exists, ask whether to overwrite only in standalone mode. In unattended Phase 1, accept only the deterministic managed-bootstrap shape described above; return `BLOCKED` for every other existing shape. In source-update mode preserve the initialized skeleton.
+- If `.vsdd/specs/<slug>/` already exists, ask whether to overwrite only in standalone mode. In unattended Phase 1, accept only the deterministic managed-bootstrap shape described above; return `BLOCKED` for every other existing shape. In source-update mode preserve the initialized skeleton.
 - The `slug` is used as-is in all file paths. Choose descriptive, stable slugs.
 
 ---
 
 == PHASE COMPLETE: vsdd-init ==
-Artifact: .claude/specs/<slug>/progress.md
+Artifact: .vsdd/specs/<slug>/progress.md
 Summary:
 
-- Created spec directory structure under .claude/specs/<slug>/
+- Created spec directory structure under .vsdd/specs/<slug>/
 - Recorded mode (standard|auto) in progress.md
 - Persisted the requested source artifact, if provided
 - All placeholder artifacts initialized

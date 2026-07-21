@@ -26,7 +26,7 @@ ${CLAUDE_PLUGIN_ROOT}/skills/vsdd-run/references/runtime-contract.md
 
 ## List view
 
-Without a slug, enumerate `.claude/specs/*/run-state.json` except `_steering` and display:
+Without a slug, enumerate `.vsdd/specs/*/run-state.json` except `_steering` and display:
 
 | Slug | Status | Current phase | Attempt | Branch | Updated | Next action |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ Branch: vsdd/mail-groups-filter
 Worktree: /absolute/path
 Implementation session: <uuid>
 Reviews: requirements=PASS plan=PASS implementation-workflow=REVISE code=not-run security=not-run
-Evidence: .claude/specs/mail-groups-filter/review-results/implementation-workflow-review.md
+Evidence: .vsdd/specs/mail-groups-filter/review-results/implementation-workflow-review.md
 Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
 Cancel: /ecc-vsdd:vsdd-run cancel mail-groups-filter
 Cleanup: /ecc-vsdd:vsdd-run cleanup mail-groups-filter

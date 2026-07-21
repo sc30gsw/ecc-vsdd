@@ -348,7 +348,7 @@ def require_managed_worktree_path(worktree: Path, slug: str) -> Path:
 
 def spec_root(worktree: Path, slug: str) -> Path:
     validate_slug(slug)
-    return worktree / ".claude" / "specs" / slug
+    return worktree / ".vsdd" / "specs" / slug
 
 
 def state_path(worktree: Path, slug: str) -> Path:
@@ -381,7 +381,7 @@ def write_state_atomic(worktree: Path, slug: str, state: dict) -> None:
 
 def artifact_paths(worktree: Path, slug: str, phase: str) -> list[Path]:
     spec = spec_root(worktree, slug)
-    steering = worktree / ".claude" / "specs" / "_steering"
+    steering = worktree / ".vsdd" / "specs" / "_steering"
     outputs = {
         "steering": [
             steering / "tech.md",
@@ -993,7 +993,7 @@ def open_question_blocks(text: str) -> list[str]:
 
 
 def steering_issues(worktree: Path, slug: str) -> list[str]:
-    steering = worktree / ".claude" / "specs" / "_steering"
+    steering = worktree / ".vsdd" / "specs" / "_steering"
     required = ("tech.md", "structure.md", "context.md", "open-questions.md")
     issues: list[str] = []
     for name in required:
@@ -1153,8 +1153,8 @@ def uncommitted_non_spec_issues(worktree: Path, slug: str) -> list[str]:
         "--untracked-files=all",
     )
     allowed_prefixes = (
-        f".claude/specs/{slug}/",
-        ".claude/specs/_steering/",
+        f".vsdd/specs/{slug}/",
+        ".vsdd/specs/_steering/",
     )
     unsafe: list[str] = []
     entries = output.split("\0")

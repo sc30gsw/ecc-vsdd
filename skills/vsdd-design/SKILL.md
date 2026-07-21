@@ -12,14 +12,14 @@ Delegate all design authoring and revision to a fresh `vsdd-design-worker` (Opus
 When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior regardless of presentation mode, ask no questions, and do not wait on `CONFIRM`. The persisted design gate and fresh Opus plan review replace manual confirmation; unresolved decisions at the unattended boundary return `BLOCKED`.
 
 **Slash command**: `/vsdd-design <slug>`
-**Purpose**: Create `design.md` by delegating to the `/ecc:plan` command for architecture and step planning, then merging output into the design template. Stack-agnostic: all technology knowledge comes from `.claude/specs/_steering/tech.md`.
+**Purpose**: Create `design.md` by delegating to the `/ecc:plan` command for architecture and step planning, then merging output into the design template. Stack-agnostic: all technology knowledge comes from `.vsdd/specs/_steering/tech.md`.
 
 ---
 
 ## Prerequisites
 
-- `.claude/specs/<slug>/requirements.md` must exist (run `/vsdd-requirements` first)
-- `.claude/specs/<slug>/source-notion.md` or `source-request.md` may optionally be present for additional context; in unattended runs read every path from `run-state.json.source_paths`
+- `.vsdd/specs/<slug>/requirements.md` must exist (run `/vsdd-requirements` first)
+- `.vsdd/specs/<slug>/source-notion.md` or `source-request.md` may optionally be present for additional context; in unattended runs read every path from `run-state.json.source_paths`
 
 ---
 
@@ -29,12 +29,12 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior reg
 
 Read the project steering files as read-only context:
 
-- `.claude/specs/_steering/tech.md` — **the stack contract**: §1 Stack, §2 Design Viewpoints, §3 Conventions, §4 Verification Commands. The design uses only listed technologies unless an ADR justifies a new one, and MUST produce one section per §2 viewpoint.
-- `.claude/specs/_steering/structure.md` — current module boundaries and exported symbols (the design MUST respect these boundaries; new features should be additive, not overlapping)
-- `.claude/specs/_steering/context.md` — domain glossary (use registered terms only)
+- `.vsdd/specs/_steering/tech.md` — **the stack contract**: §1 Stack, §2 Design Viewpoints, §3 Conventions, §4 Verification Commands. The design uses only listed technologies unless an ADR justifies a new one, and MUST produce one section per §2 viewpoint.
+- `.vsdd/specs/_steering/structure.md` — current module boundaries and exported symbols (the design MUST respect these boundaries; new features should be additive, not overlapping)
+- `.vsdd/specs/_steering/context.md` — domain glossary (use registered terms only)
 - `docs/adr/*.md` — accepted architectural decisions (cite relevant ADRs as `Satisfies: ADR-NNNN` in design sections)
 
-If `.claude/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
+If `.vsdd/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
 
 If `tech.md` lacks the §2 Design Viewpoints / §3 Conventions / §4 Verification Commands sections, return `BLOCKED` in unattended mode and require Steering refresh. Standalone mode may ask whether to continue.
 
@@ -46,9 +46,9 @@ When the design introduces a new architectural decision (new state-management or
 ### 1. Read spec inputs
 
 ```
-.claude/specs/<slug>/requirements.md      (required)
-.claude/specs/<slug>/source-notion.md     (optional)
-.claude/specs/<slug>/source-request.md    (optional)
+.vsdd/specs/<slug>/requirements.md      (required)
+.vsdd/specs/<slug>/source-notion.md     (optional)
+.vsdd/specs/<slug>/source-request.md    (optional)
 ```
 
 Extract:
@@ -88,7 +88,7 @@ strategy, and test strategy.
 Copy the template bundled with this skill (`templates/design.md`) to:
 
 ```
-.claude/specs/<slug>/design.md
+.vsdd/specs/<slug>/design.md
 ```
 
 Then instantiate the viewpoint placeholder: insert one `## <N>. <Viewpoint section name>` section per row of tech.md §2, between the File Structure Plan and Error Handling Strategy sections, renumbering subsequent sections.
@@ -125,7 +125,7 @@ Satisfies: <!-- cross-cutting concern, no direct REQ -->
 ## Output
 
 ```
-.claude/specs/<slug>/design.md
+.vsdd/specs/<slug>/design.md
 ```
 
 ---
@@ -139,9 +139,9 @@ Use the same gate for the initial write and for any later revision to `design.md
 
 ### Initial completion
 
-Update `.claude/specs/<slug>/progress.md`: change `vsdd-design` from `⬜ not started` to `✅ complete`.
+Update `.vsdd/specs/<slug>/progress.md`: change `vsdd-design` from `⬜ not started` to `✅ complete`.
 
-Append to `.claude/specs/<slug>/change-log.md`:
+Append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-design | design.md 作成 |
@@ -149,7 +149,7 @@ Append to `.claude/specs/<slug>/change-log.md`:
 
 ```
 == PHASE COMPLETE: vsdd-design ==
-Artifact: .claude/specs/<slug>/design.md
+Artifact: .vsdd/specs/<slug>/design.md
 Summary:
 - Architecture decisions recorded with Mermaid diagrams
 - File structure mapped to the project layout from structure.md
@@ -167,7 +167,7 @@ Omit the standalone confirmation lines entirely when `execution_mode: unattended
 
 ### After user-requested revisions
 
-Append to `.claude/specs/<slug>/change-log.md`:
+Append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-design | design.md 更新 (<list changed sections>) |
@@ -177,7 +177,7 @@ When the user asks to change sections of an existing `design.md` (do not treat t
 
 ```
 == DESIGN REVISED ==
-Artifact: .claude/specs/<slug>/design.md（更新箇所: <list sections>）
+Artifact: .vsdd/specs/<slug>/design.md（更新箇所: <list sections>）
 Summary:
 - <bullet: what changed and why>
 

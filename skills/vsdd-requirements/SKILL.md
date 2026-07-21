@@ -19,13 +19,13 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, read every persisted 
 
 **Arguments:**
 
-- `<slug>` — kebab-case feature identifier matching an existing `.claude/specs/<slug>/` directory
+- `<slug>` — kebab-case feature identifier matching an existing `.vsdd/specs/<slug>/` directory
 
 ---
 
 ## Purpose
 
-Create or refine `requirements.md` for the feature using the EARS (Event-Action-Response-Stimulus) format. The mode is read from `.claude/specs/<slug>/progress.md` and determines how the AI interacts with the user.
+Create or refine `requirements.md` for the feature using the EARS (Event-Action-Response-Stimulus) format. The mode is read from `.vsdd/specs/<slug>/progress.md` and determines how the AI interacts with the user.
 
 ---
 
@@ -35,22 +35,22 @@ Create or refine `requirements.md` for the feature using the EARS (Event-Action-
 
 Read the project steering files as read-only context:
 
-- `.claude/specs/_steering/context.md` — domain glossary (use ONLY registered terms in requirements.md)
-- `.claude/specs/_steering/structure.md` — feature inventory (cross-reference with REQ scope)
-- `.claude/specs/_steering/open-questions.md` — known unresolved items (avoid creating new requirements that depend on open questions)
+- `.vsdd/specs/_steering/context.md` — domain glossary (use ONLY registered terms in requirements.md)
+- `.vsdd/specs/_steering/structure.md` — feature inventory (cross-reference with REQ scope)
+- `.vsdd/specs/_steering/open-questions.md` — known unresolved items (avoid creating new requirements that depend on open questions)
 - `docs/adr/*.md` — accepted architectural decisions (cite when relevant in NFRs)
 
-If `.claude/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
+If `.vsdd/specs/_steering/` is missing, abort with: "Run `/vsdd-steering` first to bootstrap the steering files."
 
 When a REQ requires a domain term not in `context.md`:
 
-1. Append a new `### Q-NNN: Undefined term '<term>' used in REQ-XXX` entry to `.claude/specs/_steering/open-questions.md` with `Impact: product` and `Status: open`.
+1. Append a new `### Q-NNN: Undefined term '<term>' used in REQ-XXX` entry to `.vsdd/specs/_steering/open-questions.md` with `Impact: product` and `Status: open`.
 2. Use the term in REQ with a `> **Glossary pending**: <term>` note.
 3. In unattended mode return `BLOCKED` immediately; otherwise resolve in a separate grill-with-docs session before `/vsdd-design`.
 
 ### Step 1: Read mode from progress.md
 
-Read `.claude/specs/<slug>/progress.md` and extract the `**Mode**:` value.
+Read `.vsdd/specs/<slug>/progress.md` and extract the `**Mode**:` value.
 
 - If `standard` → follow the Standard Mode flow below.
 - If `auto` → follow the Auto Mode flow below.
@@ -66,7 +66,7 @@ Read every path in `run-state.json.source_paths`, including `source-notion.md` o
 
 Engineer-led. The AI presents a scaffold and assists completions.
 
-1. Copy the template from `.claude/skills/vsdd-requirements/templates/requirements.md` to `.claude/specs/<slug>/requirements.md` (do not overwrite if requirements.md already has real content — ask first).
+1. Copy the template from `.claude/skills/vsdd-requirements/templates/requirements.md` to `.vsdd/specs/<slug>/requirements.md` (do not overwrite if requirements.md already has real content — ask first).
 2. Display the scaffold to the user.
 3. Offer to help fill in individual REQ blocks:
    - "Tell me about the first user story and I'll draft the EARS format for you."
@@ -141,13 +141,13 @@ Run these checks on the completed `requirements.md` and flag issues as inline co
 
 ## Output
 
-Write the completed requirements to `.claude/specs/<slug>/requirements.md`.
+Write the completed requirements to `.vsdd/specs/<slug>/requirements.md`.
 
-Update `.claude/specs/<slug>/progress.md`:
+Update `.vsdd/specs/<slug>/progress.md`:
 
 - Change `vsdd-requirements` status from `⬜ not started` to `✅ complete`.
 
-Append to `.claude/specs/<slug>/change-log.md`:
+Append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-requirements | requirements.md 作成 (<N> REQs) |
@@ -165,7 +165,7 @@ Append to `.claude/specs/<slug>/change-log.md`:
 ---
 
 == PHASE COMPLETE: vsdd-requirements ==
-Artifact: .claude/specs/<slug>/requirements.md
+Artifact: .vsdd/specs/<slug>/requirements.md
 Summary:
 
 - Mode read from progress.md

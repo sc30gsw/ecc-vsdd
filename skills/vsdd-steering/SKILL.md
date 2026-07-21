@@ -24,14 +24,14 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, obey the bundled runt
 
 Behavior when no argument is given:
 
-- `.claude/specs/_steering/` missing → **bootstrap** (creates four files).
+- `.vsdd/specs/_steering/` missing → **bootstrap** (creates four files).
 - Already present → **refresh** (regenerates auto sections only, preserves manual sections).
 
 ---
 
 ## Purpose
 
-Generate and update the four steering files under `.claude/specs/_steering/`. These are the baseline files that guarantee coherence between VSDD specs and the codebase **before** any spec is created.
+Generate and update the four steering files under `.vsdd/specs/_steering/`. These are the baseline files that guarantee coherence between VSDD specs and the codebase **before** any spec is created.
 
 **`tech.md` is the single source of truth for everything stack-specific.** All other VSDD skills (`vsdd-design`, `vsdd-tasks`, `vsdd-impl`, `vsdd-review*`) are stack-agnostic: they define process only and read stack knowledge from `tech.md` at runtime. This skill is the only place where the project's technology is inspected and recorded.
 
@@ -56,7 +56,7 @@ ADRs are kept separately under `docs/adr/`. This skill does NOT create ADRs.
 ### Step 2: Ensure `_steering/` directory exists
 
 ```bash
-mkdir -p .claude/specs/_steering/
+mkdir -p .vsdd/specs/_steering/
 ```
 
 ### Step 3: Generate `tech.md` (detect → draft → interview → confirm)
@@ -210,7 +210,7 @@ Designed to be invoked internally by `/vsdd-init` (Phase 2 wiring):
 ---
 
 == PHASE COMPLETE: vsdd-steering ==
-Artifact: .claude/specs/\_steering/
+Artifact: .vsdd/specs/\_steering/
 Summary:
 
 - Regenerated or bootstrapped tech.md / structure.md / context.md / open-questions.md

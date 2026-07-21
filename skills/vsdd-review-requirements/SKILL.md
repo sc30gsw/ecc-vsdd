@@ -17,13 +17,13 @@ Delegate each review attempt to a new `vsdd-requirements-reviewer` (Opus, `xhigh
 
 **Arguments:**
 
-- `<slug>` — kebab-case feature identifier matching an existing `.claude/specs/<slug>/` directory
+- `<slug>` — kebab-case feature identifier matching an existing `.vsdd/specs/<slug>/` directory
 
 ---
 
 ## Purpose
 
-Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, feasibility, terminology, and missing edge cases. Write a structured verdict to `.claude/specs/<slug>/review-results/requirement-review.md`. Mode changes presentation only; the pinned Opus reviewer and gate never change.
+Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, feasibility, terminology, and missing edge cases. Write a structured verdict to `.vsdd/specs/<slug>/review-results/requirement-review.md`. Mode changes presentation only; the pinned Opus reviewer and gate never change.
 
 ---
 
@@ -31,16 +31,16 @@ Review `requirements.md` for completeness, clarity, EARS compliance, ambiguity, 
 
 ### Step 1: Read mode and validate prerequisites
 
-Read `.claude/specs/<slug>/progress.md`:
+Read `.vsdd/specs/<slug>/progress.md`:
 
 - Extract `**Mode**:` value (`standard` or `auto`).
 - Check that `vsdd-requirements` phase is marked `✅ complete`. If not, abort and instruct the user to run `/vsdd-requirements <slug>` first.
 - If `progress.md` does not exist, abort and instruct the user to run `/vsdd-init <slug>` first.
-- Create `.claude/specs/<slug>/review-results/` directory if it does not exist.
+- Create `.vsdd/specs/<slug>/review-results/` directory if it does not exist.
 
 ### Step 2: Load requirements.md
 
-Read `.claude/specs/<slug>/requirements.md` in full.
+Read `.vsdd/specs/<slug>/requirements.md` in full.
 
 - If the file contains only the placeholder comment (`<!-- Artifact not yet generated... -->`), abort and instruct the user to run `/vsdd-requirements <slug>` first.
 - Count the number of REQ blocks for the review summary.
@@ -103,19 +103,19 @@ Scan all requirement text for vague qualifiers. Flag occurrences as **MEDIUM**:
 
 ### Check 8: Term Drift against Steering (both modes)
 
-Cross-reference every domain term used in `requirements.md` against `.claude/specs/_steering/context.md`.
+Cross-reference every domain term used in `requirements.md` against `.vsdd/specs/_steering/context.md`.
 
 - Term used in REQ but not registered in `context.md` → **MEDIUM** (suggest: define the term in `context.md` via grill-with-docs, OR replace with a registered term)
 - Term registered in `context.md` but used with a meaning that conflicts with the registered definition → **HIGH**
 - New term flagged with `> **Glossary pending**: <term>` by `vsdd-requirements` → **MEDIUM** (must be resolved before `/vsdd-design`)
 
-If `.claude/specs/_steering/context.md` is missing, abort the review with: "Run `/vsdd-steering` first to bootstrap the steering files."
+If `.vsdd/specs/_steering/context.md` is missing, abort the review with: "Run `/vsdd-steering` first to bootstrap the steering files."
 
 ---
 
 ## Output Format
 
-Write the following to `.claude/specs/<slug>/review-results/requirement-review.md`:
+Write the following to `.vsdd/specs/<slug>/review-results/requirement-review.md`:
 
 ```markdown
 ---
@@ -168,13 +168,13 @@ All CRITICAL/HIGH findings must be resolved before running `/vsdd-design <slug>`
 
 ## change-log.md Update
 
-After writing findings to requirement-review.md, append to `.claude/specs/<slug>/change-log.md`:
+After writing findings to requirement-review.md, append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-review-requirements | requirement-review.md 作成 (<N> findings: M HIGH, N MEDIUM, P LOW) |
 ```
 
-Also update `.claude/specs/<slug>/progress.md`:
+Also update `.vsdd/specs/<slug>/progress.md`:
 
 ```
 ## Phase: vsdd-review-requirements
@@ -199,7 +199,7 @@ Change `vsdd-review-requirements` status to `✅ complete` only for `verdict: PA
 ---
 
 == PHASE COMPLETE: vsdd-review-requirements ==
-Artifact: .claude/specs/<slug>/review-results/requirement-review.md
+Artifact: .vsdd/specs/<slug>/review-results/requirement-review.md
 Summary:
 
 - Mode read from progress.md

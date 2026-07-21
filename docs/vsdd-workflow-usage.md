@@ -22,7 +22,7 @@ Claude Code内で実行します。
 /reload-plugins
 ```
 
-plugin manifestの`dependencies: ["ecc"]`により、marketplaceの明示的なHTTPS Git sourceから`affaan-m/ECC`が自動インストール・有効化されます。projectの`.claude/settings.json`へ`enabledPlugins`を書く必要はありません。
+plugin manifestの`dependencies: ["ecc"]`により、marketplaceの明示的なHTTPS Git sourceから`affaan-m/ECC`が自動インストール・有効化されます。projectの`.claude/settings.json`へ`enabledPlugins`を書く必要はありません。VSDD成果物はClaude Codeのprotected pathである`.claude/`を避け、`.vsdd/specs/`へ保存します。したがって無人実行のために`bypassPermissions`を有効化する必要もありません。
 
 ローカルcheckoutを直接検証する場合は次のように起動できます。
 
@@ -146,7 +146,7 @@ Dynamic Workflowのsession IDはlauncherが`run-state.json`へ保存します。
 VSDD RUN BLOCKED: mail-groups-filter
 Phase: implementation-plan-review
 Attempt: 3/3
-Evidence: .claude/specs/mail-groups-filter/review-results/implementation-workflow-review.md
+Evidence: .vsdd/specs/mail-groups-filter/review-results/implementation-workflow-review.md
 Preserved state: .../run-state.json
 Resume: /ecc-vsdd:vsdd-run resume mail-groups-filter
 ```
@@ -209,7 +209,7 @@ hookはClaude Codeが観測する通常のtool commandを防御しますが、�
 ## Artifact layout
 
 ```text
-.claude/specs/
+.vsdd/specs/
 ├── _steering/
 │   ├── tech.md
 │   ├── structure.md

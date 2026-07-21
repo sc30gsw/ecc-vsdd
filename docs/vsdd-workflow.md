@@ -10,7 +10,7 @@ ecc-vsddは、仕様を唯一の真実の源として、SteeringからPRまで�
 REQ → Design → TASK → Test → Commit → Review → PR
 ```
 
-技術スタック固有の知識は`.claude/specs/_steering/tech.md`へ集約します。各Skillはそこから設計観点、規約、検証コマンドを読み取るため、フロントエンド、API、CLIなどに共通適用できます。
+技術スタック固有の知識は`.vsdd/specs/_steering/tech.md`へ集約します。各Skillはそこから設計観点、規約、検証コマンドを読み取るため、フロントエンド、API、CLIなどに共通適用できます。
 
 ## 2. 10フェーズ
 
@@ -142,7 +142,7 @@ Phase 7のDynamic Workflowはintegration worktreeを基点として、必要なT
 
 ## 8. 再開と無効化
 
-`.claude/specs/<slug>/run-state.json`へ次を保存します。
+`.vsdd/specs/<slug>/run-state.json`へ次を保存します。
 
 - agent、model、effort
 - sourceを含むprimary artifactのSHA-256 input/output hash

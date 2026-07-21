@@ -57,7 +57,7 @@ Derive every claim from disk and Git. Do not fabricate commands, results, commit
 
 ## Publish through the broker
 
-Write the complete body to the absolute path `.claude/specs/<slug>/pr-body.md`. Do not push, call `gh pr create`, call `gh api`, or write `pr-result.json` directly. Read the one-time values injected into this worker's `SubagentStart` context:
+Write the complete body to the absolute path `.vsdd/specs/<slug>/pr-body.md`. Do not push, call `gh pr create`, call `gh api`, or write `pr-result.json` directly. Read the one-time values injected into this worker's `SubagentStart` context:
 
 - `VSDD_PR_ACTION_CAPABILITY`
 - `VSDD_PR_ACTION_SESSION_ID`
@@ -79,7 +79,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/vsdd-pr-action.py" publish \
 
 The broker revalidates the private authorization, current PR preflight, recorded base branch/SHA, exact integration branch/HEAD, and remote base. It pushes only the exact integration ref, rechecks preflight, creates or reuses the PR, validates GitHub's base/head identity and draft state, and atomically persists the completion authority below. Never assume `main` or redetect a different base at PR time.
 
-The broker persists `.claude/specs/<slug>/pr-result.json` with exactly these current fields:
+The broker persists `.vsdd/specs/<slug>/pr-result.json` with exactly these current fields:
 
 ```json
 {

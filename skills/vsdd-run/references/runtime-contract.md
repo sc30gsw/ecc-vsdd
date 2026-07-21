@@ -146,4 +146,4 @@ After that TASK attempt, run `finish-attempt` with the returned `--attempt` and 
 
 ## PR completion evidence
 
-The PR action broker must write `.claude/specs/<slug>/pr-result.json` with `url`, positive integer `number`, `draft`, `base_branch`, `base_sha`, `head_branch`, `head_sha`, `target_commit`, and `created_at`. Snapshot phase `pr` only after the broker writes it. The runtime requires the recorded base identity, `head_branch: vsdd/<slug>`, and both head fields equal to the current integration `HEAD`.
+The PR action broker must write `.vsdd/specs/<slug>/pr-result.json` with `url`, positive integer `number`, `draft`, `base_branch`, `base_sha`, `head_branch`, `head_sha`, `target_commit`, and `created_at`. Snapshot phase `pr` only after the broker writes it. The runtime requires the recorded base identity, `head_branch: vsdd/<slug>`, and both head fields equal to the current integration `HEAD`.

@@ -100,7 +100,7 @@ print(json.dumps({'status': 'READY', 'phase': 'pr'}))
             "feature",
         )
         head_sha = git(source, "rev-parse", "HEAD")
-        spec = source / ".claude" / "specs" / "sample"
+        spec = source / ".vsdd" / "specs" / "sample"
         spec.mkdir(parents=True)
         state = {
             "schema_version": 4,

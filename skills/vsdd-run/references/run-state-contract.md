@@ -1,6 +1,6 @@
 # Run state contract
 
-Persist `.claude/specs/<slug>/run-state.json` atomically with this logical shape:
+Persist `.vsdd/specs/<slug>/run-state.json` atomically with this logical shape:
 
 ```json
 {
@@ -9,7 +9,7 @@ Persist `.claude/specs/<slug>/run-state.json` atomically with this logical shape
   "status": "RUNNING|BLOCKED|CANCELLED|COMPLETE",
   "execution_mode": "unattended",
   "request": "original feature brief or source URL",
-  "source_paths": [".claude/specs/feature-slug/source-notion.md"],
+  "source_paths": [".vsdd/specs/feature-slug/source-notion.md"],
   "until": "review|pr",
   "reached": "review|pr",
   "completed_at": "ISO-8601 timestamp",
@@ -43,7 +43,7 @@ Before every phase and on resume, run `scripts/vsdd-runtime-state.py preflight`.
 
 Snapshotting a legitimately regenerated artifact compares it with the prior owned hash before replacement. When it changed, keep the current phase at its new status and invalidate only its dependents. Requirements/Design/Tasks changes invalidate all affected downstream artifacts; Remediation changes invalidate both Code and Security reviews plus PR without resetting the shared post-review counter.
 
-Managed Start bootstrap creates the integration worktree and `.claude/specs/<slug>/run-state.json` before Phase 0. Phase 1 Init may consume that existing path only when `bootstrap_status` is `READY`, Init is pending, both recorded and active branch are exactly `vsdd/<slug>`, the recorded worktree equals the active Git top-level, and the feature spec contains no other entry. Snapshotting Init changes the status to `CONSUMED`. This narrow exception is not an overwrite path.
+Managed Start bootstrap creates the integration worktree and `.vsdd/specs/<slug>/run-state.json` before Phase 0. Phase 1 Init may consume that existing path only when `bootstrap_status` is `READY`, Init is pending, both recorded and active branch are exactly `vsdd/<slug>`, the recorded worktree equals the active Git top-level, and the feature spec contains no other entry. Snapshotting Init changes the status to `CONSUMED`. This narrow exception is not an overwrite path.
 
 Create that state only with the bundled `bootstrap` command and a context envelope containing `operation: bootstrap`. Phase 1 uses a separate worker invocation with `operation: phase` and `phase: init`. Bootstrap bypasses Steering because it precedes Phase 0; Phase 1 never bypasses Steering.
 
@@ -59,6 +59,6 @@ After exhaustion, set `status: BLOCKED`, preserve every worktree and session rec
 
 Use `begin-attempt` before every review round and TASK attempt. Reviews are finished by a validated report snapshot; TASKs require an explicit matching `finish-attempt --outcome PASS|FAIL`. Rewriting a snapshotted report with the same number, overlapping unfinished attempts, a fourth attempt, or a third failing outcome is rejected mechanically.
 
-PR completion additionally requires a snapshotted `.claude/specs/<slug>/pr-result.json`. Its GitHub URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit must all match the current run state and integration `HEAD`; a worker completion message alone cannot complete PR.
+PR completion additionally requires a snapshotted `.vsdd/specs/<slug>/pr-result.json`. Its GitHub URL/number, recorded base branch/SHA, integration head branch/SHA, and target commit must all match the current run state and integration `HEAD`; a worker completion message alone cannot complete PR.
 
 After the requested boundary is fully snapshotted, use the bundled `complete --reached review|pr` command. It is the only path that sets top-level `status: COMPLETE`, `reached`, `completed_at`, and the terminal `current_phase`. A review-complete run remains closed until the user explicitly requests `resume <slug> --until pr`; then use `extend --until pr` to preserve the review completion timestamp, set `until: pr`, and reopen at Phase 9. Any artifact invalidation clears terminal completion markers.

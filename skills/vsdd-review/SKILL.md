@@ -35,7 +35,7 @@ Require the approved requirements, design, tasks, plan review, immutable impleme
 Write only:
 
 ```text
-.claude/specs/<slug>/review-results/code-review.md
+.vsdd/specs/<slug>/review-results/code-review.md
 ```
 
 Check correctness, acceptance-criteria coverage, scope, traceability, tests, regressions, type safety, performance, maintainability, steering conventions, architecture boundaries, and drift. Every finding must cite evidence and affected REQ/TASK IDs.
@@ -45,7 +45,7 @@ Check correctness, acceptance-criteria coverage, scope, traceability, tests, reg
 Write only:
 
 ```text
-.claude/specs/<slug>/review-results/security-review.md
+.vsdd/specs/<slug>/review-results/security-review.md
 ```
 
 Check secrets, trust boundaries, authentication, authorization, input validation, injection, SSRF, XSS, path traversal, unsafe deserialization, dependency risks, sensitive data, abuse cases, and project-specific security rules. Every finding must cite evidence and affected REQ/TASK IDs.

@@ -185,7 +185,7 @@ def wait_for_detached_launcher(
     evidence: Path, worktree: Path, slug: str, wait_seconds: int
 ) -> None:
     supervisors = (
-        worktree / ".claude" / "specs" / slug / "worker-supervisors"
+        worktree / ".vsdd" / "specs" / slug / "worker-supervisors"
     ).resolve()
     evidence = evidence.expanduser().resolve()
     try:
@@ -409,7 +409,7 @@ def changed_paths(worktree: Path) -> set[str]:
 
 def planning_guard_fingerprint(worktree: Path, slug: str) -> str:
     """Hash every working-tree change except the plan and launcher evidence."""
-    spec_prefix = f".claude/specs/{slug}/"
+    spec_prefix = f".vsdd/specs/{slug}/"
     allowed = {
         f"{spec_prefix}implementation-workflow.md",
     }
@@ -600,7 +600,7 @@ def require_runtime_preflight(
     if result.returncode or outcome.get("status") != "READY":
         detail = outcome.get("error") or outcome.get("status") or result.stderr.strip()
         fail(f"deterministic preflight blocked {stage}: {detail}")
-    state_path = worktree / ".claude" / "specs" / slug / "run-state.json"
+    state_path = worktree / ".vsdd" / "specs" / slug / "run-state.json"
     state = read_json(state_path)
     issues = stage_state_issues(stage, state, session_id)
     if issues:
@@ -654,7 +654,7 @@ def bind_implementation_session(state_path: Path, session_id: str) -> None:
 
 
 def build_prompt(stage: str, slug: str, plugin_root: Path, worktree: Path) -> str:
-    spec = worktree / ".claude" / "specs" / slug
+    spec = worktree / ".vsdd" / "specs" / slug
     contract = plugin_root / "skills" / "vsdd-run" / "references" / "implementation-contract.md"
     common = (
         f"Work only in the integration worktree {worktree}. Feature slug: {slug}. "
@@ -753,7 +753,7 @@ def main() -> None:
 
     worktree = args.worktree.expanduser().resolve()
     plugin_root = Path(__file__).resolve().parents[1]
-    spec = worktree / ".claude" / "specs" / args.slug
+    spec = worktree / ".vsdd" / "specs" / args.slug
     if not (worktree / ".git").exists():
         fail(f"not a Git checkout or worktree: {worktree}")
     if not (spec / "tasks.md").is_file():
@@ -820,8 +820,8 @@ def main() -> None:
         if args.stage in {"plan", "revise-plan"}
         else None
     )
-    spec_prefix = f".claude/specs/{args.slug}/"
-    allowed_spec_prefixes = (spec_prefix, ".claude/specs/_steering/")
+    spec_prefix = f".vsdd/specs/{args.slug}/"
+    allowed_spec_prefixes = (spec_prefix, ".vsdd/specs/_steering/")
     unsafe_before = sorted(
         path
         for path in before_paths
@@ -1071,7 +1071,7 @@ def main() -> None:
         after_paths = changed_paths(worktree)
         newly_changed = after_paths - before_paths
         allowed = {
-            f".claude/specs/{args.slug}/implementation-workflow.md",
+            f".vsdd/specs/{args.slug}/implementation-workflow.md",
             record_path.relative_to(worktree).as_posix(),
         }
         unexpected = sorted(newly_changed - allowed)

@@ -79,7 +79,7 @@ GitHub PR         (REQ → TASK → commit トレーサビリティ表付き)
 
 ### スタック非依存設計 — tech.md が唯一のスタック知識源
 
-本プラグインのskill群はプロセス（フェーズ・検証ゲート・トレーサビリティ）のみを定義し、技術スタック固有の知識をハードコードしません。スタック知識は`/vsdd-steering`が検出・確認して生成する`.claude/specs/_steering/tech.md`に集約され、各skillが実行時に読み込みます。
+本プラグインのskill群はプロセス（フェーズ・検証ゲート・トレーサビリティ）のみを定義し、技術スタック固有の知識をハードコードしません。スタック知識は`/vsdd-steering`が検出・確認して生成する`.vsdd/specs/_steering/tech.md`に集約され、各skillが実行時に読み込みます。
 
 | tech.md 節 | 内容 | 消費する skill |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ GitHub PR         (REQ → TASK → commit トレーサビリティ表付き)
 | -   | **Orchestrator** | `/vsdd-run start|resume|status|cancel|cleanup ...` | Phase 0〜9をモデル固定・検証付きで自動実行・再開 |
 | -   | **Meta**         | `/vsdd-workflow [slug]`                   | フェーズ状態の表示（読み取り専用）                     |
 
-成果物はすべて `.claude/specs/<slug>/` 以下に保存されます。
+成果物はすべて `.vsdd/specs/<slug>/` 以下に保存されます。`.claude/` はClaude Codeのprotected pathであり、無人workerからの書き込みには`bypassPermissions`が必要になるため、VSDD成果物には使用しません。これによりhost上で危険なpermission bypassを有効にせず、`acceptEdits`と検証済みhookの範囲でworkflowを完走できます。`.claude/agents/`はClaude Codeが通常生成を許可する例外領域なので、保護済みproject agentの一時配置にだけ使用します。
 
 仕様ソースは Notion ページ URL でも、手元の要件メモでも構いません。Notionは`source-notion.md`、ファイルまたは詳細briefは`source-request.md`として保存され、以降のフェーズの真実の源になります。
 
@@ -185,7 +185,7 @@ Startは`operation: bootstrap`を明示し、同梱runtimeの専用`bootstrap` c
 
 各フェーズ前には同梱runtimeが成果物hash、必須の前段phase、構造化review snapshot、SteeringのOpen/DRAFT、固定`vsdd/<slug>` branch、TASK集合を再検証します。上流成果物を正規再生成してsnapshotした場合も、新しい現在phaseだけを完了に保ち、依存する旧review・設計・TASK・実装を無効化します。TASK commitはintegration `HEAD`のancestorでなければならず、Code/Security reviewは現在のfull SHAに一致し、同一の現行review attemptで作成されたOpus PASSでなければPRへ進めません。
 
-Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存とmanaged worktree rootの`--add-dir`をisolated childへ明示的に引き継いでからClaudeを起動します。TASK worktreeはDynamic Workflowが同root内で決定します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。launcher-boundなsession capabilityを検証したglobal hookがWorkflow agentのlocal toolを無人許可し、指定外workerを含む直接push/GitHub mutationは拒否します。`.claude/specs`はRead/Glob/Grepで参照し、background Workflowの完了通知と成果物検証が終わるまで最終結果を返しません。各stageは現在の`workflow_run_id`を返し、plan/revise-planでは新しい内容と同じrun IDを本文へ保存するため、既存planを読んだだけのstale COMPLETEや古いrun IDの流用はlauncherが拒否します。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記し、完了TASKを`progress.md`の`done`へ同期します。実装・修正stageの最終`COMPLETE`は、launcherが同梱runtimeの`task-gate`を実行し、TASK集合、`done`状態、attempt PASS、Markdown形式のSHA mapping、commit存在性とintegration `HEAD`到達性、未commitの非spec変更がないことのすべてを検証した場合だけ受理します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
+Phase 7は`tasks.md`全体を読むSonnet `ultracode`セッションです。launcher自身がdeterministic preflight、phase状態、保存済みsession IDを確認し、plugin manifest依存とmanaged worktree rootの`--add-dir`をisolated childへ明示的に引き継いでからClaudeを起動します。TASK worktreeはDynamic Workflowが同root内で決定します。長時間処理はlauncher-owned detached supervisorが所有し、Fableはshell backgroundを使わず45秒単位のforeground `wait`をterminal結果まで繰り返します。これによりBashの10分上限、Fable compaction、session再開を跨いでもchildが失われません。launcher-boundなsession capabilityを検証したglobal hookがWorkflow agentのlocal toolを無人許可し、指定外workerを含む直接push/GitHub mutationは拒否します。`.vsdd/specs`はRead/Glob/Grepで参照し、background Workflowの完了通知と成果物検証が終わるまで最終結果を返しません。各stageは現在の`workflow_run_id`を返し、plan/revise-planでは新しい内容と同じrun IDを本文へ保存するため、既存planを読んだだけのstale COMPLETEや古いrun IDの流用はlauncherが拒否します。Dynamic WorkflowがTASK依存関係、並列化、worktree、統合順を判断して`implementation-workflow.md`へ保存し、新規OpusのPASS後だけ実装へ進みます。承認済みworkflowは変更せず、attempt・TDD証跡・`TASK-to-SHA Mapping`は`implementation-ledger.md`へ追記し、完了TASKを`progress.md`の`done`へ同期します。実装・修正stageの最終`COMPLETE`は、launcherが同梱runtimeの`task-gate`を実行し、TASK集合、`done`状態、attempt PASS、Markdown形式のSHA mapping、commit存在性とintegration `HEAD`到達性、未commitの非spec変更がないことのすべてを検証した場合だけ受理します。review roundとTASK attemptは`run-state.json`の永続ledgerで開始・完了を数え、3回目のREVISE/FAIL時点で機械的にBLOCKEDになります。`ultracode`はxhigh推論と自動Workflow orchestrationを組み合わせるClaude Code設定です。詳細は[公式ドキュメント](https://code.claude.com/docs/ja/workflows#have-claude-write-a-workflow)を参照してください。
 
 上記の`--add-dir`対象は共有root全体ではなく、`/tmp/vsdd-worktrees/.tasks/<slug>/`というrun専用TASK rootです。guardは直接file toolと通常のBash pathをintegration worktreeまたはこのroot内に制限し、別runのworktreeを自動許可しません。
 
@@ -206,7 +206,7 @@ v1.0.0の公開判定は、unit/integration test、Python/JSON検証、`claude p
 /vsdd-steering
 
 # 2. Open Questions を解消（grill or dismiss）
-/grill-with-docs .claude/specs/_steering/open-questions.md の Open 全件を順に解消したい
+/grill-with-docs .vsdd/specs/_steering/open-questions.md の Open 全件を順に解消したい
 
 # 3. spec を初期化（仕様ソースが Notion にある場合は URL を渡す）
 /vsdd-init mail-groups-filter https://www.notion.so/xxxx

@@ -74,8 +74,8 @@ class RuntimeStateTest(unittest.TestCase):
 
     def make_spec(self) -> tuple[Path, Path]:
         root = self.make_repo()
-        spec = root / ".claude" / "specs" / "sample"
-        steering = root / ".claude" / "specs" / "_steering"
+        spec = root / ".vsdd" / "specs" / "sample"
+        steering = root / ".vsdd" / "specs" / "_steering"
         spec.mkdir(parents=True)
         steering.mkdir(parents=True)
         (steering / "tech.md").write_text("# Tech\n", encoding="utf-8")
@@ -99,7 +99,7 @@ class RuntimeStateTest(unittest.TestCase):
         (spec / "run-state.json").write_text(json.dumps(state), encoding="utf-8")
 
     def write_complete_steering(self, root: Path) -> None:
-        steering = root / ".claude" / "specs" / "_steering"
+        steering = root / ".vsdd" / "specs" / "_steering"
         (steering / "tech.md").write_text("# Tech\n", encoding="utf-8")
         (steering / "structure.md").write_text("# Structure\n", encoding="utf-8")
         (steering / "context.md").write_text("# Context\n", encoding="utf-8")
@@ -286,7 +286,7 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(consumed["bootstrap_status"], "CONSUMED")
         self.assertEqual(
             consumed["source_paths"],
-            [".claude/specs/sample/source-request.md"],
+            [".vsdd/specs/sample/source-request.md"],
         )
 
         source.write_text("changed source\n", encoding="utf-8")
@@ -300,7 +300,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_steering_gate_blocks_open_draft_and_glossary(self) -> None:
         root, spec = self.make_spec()
-        steering = root / ".claude" / "specs" / "_steering"
+        steering = root / ".vsdd" / "specs" / "_steering"
         (steering / "open-questions.md").write_text(
             "## Open\n\n### Q-001: Meaning\n\n- Status: open\n",
             encoding="utf-8",
@@ -321,7 +321,7 @@ class RuntimeStateTest(unittest.TestCase):
 
     def test_steering_gate_accepts_assumed_entries(self) -> None:
         root, spec = self.make_spec()
-        steering = root / ".claude" / "specs" / "_steering"
+        steering = root / ".vsdd" / "specs" / "_steering"
         (steering / "open-questions.md").write_text(
             "## Open\n\n### Q-001: Technical choice\n\n"
             "- Status: assumed\n- Assumption: reversible\n",
@@ -339,7 +339,7 @@ class RuntimeStateTest(unittest.TestCase):
         root, spec = self.make_spec()
         git(root, "branch", "-m", "vsdd/sample")
         self.write_run_state(root, spec)
-        steering = root / ".claude" / "specs" / "_steering"
+        steering = root / ".vsdd" / "specs" / "_steering"
         (steering / "context.md").write_text("# Context\n", encoding="utf-8")
         (steering / "open-questions.md").write_text(
             "## Open\n\n### Q-002: New requirement term\n\n"
@@ -497,7 +497,7 @@ class RuntimeStateTest(unittest.TestCase):
         self.assertEqual(updated["phases"]["design"]["status"], "PENDING")
         self.assertEqual(runtime.audit_state(root, "sample")["status"], "VALID")
         self.assertNotIn(
-            ".claude/specs/sample/requirements.md", updated["artifact_hashes"]
+            ".vsdd/specs/sample/requirements.md", updated["artifact_hashes"]
         )
 
     def test_source_change_invalidates_from_requirements(self) -> None:
@@ -645,7 +645,7 @@ class RuntimeStateTest(unittest.TestCase):
 
         self.assertEqual(git(source, "branch", "--show-current"), "develop")
         self.assertEqual(result["status"], "BOOTSTRAPPED")
-        spec = worktree / ".claude" / "specs" / "sample"
+        spec = worktree / ".vsdd" / "specs" / "sample"
         self.assertEqual({path.name for path in spec.iterdir()}, {"run-state.json"})
         state = json.loads((spec / "run-state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["bootstrap_status"], "READY")

@@ -67,7 +67,7 @@ Require Claude Code 2.1.214 or later, every named project-local protected worker
    - use `vsdd-runtime-state.py bootstrap` as the sole mutation path; it resolves explicit `--base` or the actual repository default branch;
    - record the exact `base_ref`, `base_branch`, and `base_sha`; never default to `main`;
    - create branch `vsdd/<slug>` and use exactly `/tmp/vsdd-worktrees/<slug>` as the dedicated integration worktree; never select a sibling or any other worktree root;
-   - create `.claude/specs/<slug>/run-state.json` as the only feature-spec file, with `bootstrap_status: READY`, `init: PENDING`, and the original request/source metadata;
+   - create `.vsdd/specs/<slug>/run-state.json` as the only feature-spec file, with `bootstrap_status: READY`, `init: PENDING`, and the original request/source metadata;
    - block if the branch, worktree, spec directory, or run state already existed before this managed bootstrap.
 4. Require the bootstrap command to leave the user's current checkout and branch unchanged, then invoke Steering with `operation: phase`.
 5. Enter the phase loop.

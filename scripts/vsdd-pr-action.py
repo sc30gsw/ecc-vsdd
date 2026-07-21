@@ -128,7 +128,7 @@ def runtime_preflight(worktree: Path, slug: str) -> None:
 
 
 def validate_state(worktree: Path, slug: str) -> tuple[Path, dict, str, str, str]:
-    spec = worktree / ".claude" / "specs" / slug
+    spec = worktree / ".vsdd" / "specs" / slug
     state = read_json_object(spec / "run-state.json", "run-state")
     base_branch = str(state.get("base_branch") or "")
     base_sha = str(state.get("base_sha") or "")

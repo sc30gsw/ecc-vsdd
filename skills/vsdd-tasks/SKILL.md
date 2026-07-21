@@ -18,8 +18,8 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior, as
 
 ## Prerequisites
 
-- `.claude/specs/<slug>/requirements.md` must exist
-- `.claude/specs/<slug>/design.md` must exist (run `/vsdd-design` first)
+- `.vsdd/specs/<slug>/requirements.md` must exist
+- `.vsdd/specs/<slug>/design.md` must exist (run `/vsdd-design` first)
 
 ---
 
@@ -28,8 +28,8 @@ When `VSDD_RUN_CONTEXT` says `execution_mode: unattended`, use auto behavior, as
 ### 1. Read spec inputs
 
 ```
-.claude/specs/<slug>/requirements.md
-.claude/specs/<slug>/design.md
+.vsdd/specs/<slug>/requirements.md
+.vsdd/specs/<slug>/design.md
 ```
 
 Extract:
@@ -100,7 +100,7 @@ One row per TASK, all set to `pending`. Status values: `pending` | `in-progress`
 
 Also update the Phase Status table already in `progress.md`: change `vsdd-tasks` from `⬜ not started` to `✅ complete`.
 
-Append to `.claude/specs/<slug>/change-log.md`:
+Append to `.vsdd/specs/<slug>/change-log.md`:
 
 ```
 | <YYYY-MM-DD> | vsdd-tasks | tasks.md 作成 (<N> TASKs) |
@@ -121,8 +121,8 @@ Append to `.claude/specs/<slug>/change-log.md`:
 ## Output
 
 ```
-.claude/specs/<slug>/tasks.md
-.claude/specs/<slug>/progress.md
+.vsdd/specs/<slug>/tasks.md
+.vsdd/specs/<slug>/progress.md
 ```
 
 ---
@@ -146,8 +146,8 @@ After writing, require deterministic preflight for `plan-review`; it must prove 
 
 ```
 == PHASE COMPLETE: vsdd-tasks ==
-Artifact: .claude/specs/<slug>/tasks.md
-Artifact: .claude/specs/<slug>/progress.md
+Artifact: .vsdd/specs/<slug>/tasks.md
+Artifact: .vsdd/specs/<slug>/progress.md
 Summary:
 - TASK-001 through TASK-NNN generated covering all REQ-XXX entries
 - All design sections §X.X covered by at least one Design ref

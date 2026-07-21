@@ -2,9 +2,9 @@
 
 ## Planning stage
 
-Start a dedicated Sonnet session with `--effort ultracode` and `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` through the bundled detached launcher. Poll its exact supervisor evidence in foreground calls until terminal; reuse a live supervisor for the same stage after compaction or resume. Read the complete approved `tasks.md` and use a Dynamic Workflow to write `.claude/specs/<slug>/implementation-workflow.md` before changing code.
+Start a dedicated Sonnet session with `--effort ultracode` and `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` through the bundled detached launcher. Poll its exact supervisor evidence in foreground calls until terminal; reuse a live supervisor for the same stage after compaction or resume. Read the complete approved `tasks.md` and use a Dynamic Workflow to write `.vsdd/specs/<slug>/implementation-workflow.md` before changing code.
 
-The dedicated session and every Dynamic Workflow agent run unattended. They must never ask for permission or user input, must use Read/Glob/Grep instead of shell `cat`/`sed`/`head`/`tail` for persisted `.claude/specs` artifacts, and must remain alive until a background Workflow sends its completion notification. A running background Workflow is not a `BLOCKED` result. Inspect its terminal result and required files before returning the single final structured result.
+The dedicated session and every Dynamic Workflow agent run unattended. They must never ask for permission or user input, must use Read/Glob/Grep instead of shell `cat`/`sed`/`head`/`tail` for persisted `.vsdd/specs` artifacts, and must remain alive until a background Workflow sends its completion notification. A running background Workflow is not a `BLOCKED` result. Inspect its terminal result and required files before returning the single final structured result.
 
 Every launcher stage must return the exact current Workflow tool run ID as `workflow_run_id`. Plan and plan-revision stages must persist newly generated content; an unchanged pre-existing `implementation-workflow.md` is never completion evidence. Record the current `wf_...` ID in the plan so the launcher can reject stale artifact reuse.
 
@@ -26,7 +26,7 @@ Pause after the planning workflow. A fresh Opus `xhigh` agent must review the fi
 
 Resume the same Sonnet session only after `verdict: PASS`. Let the Dynamic Workflow decide execution order, parallelism, and worktree use from the approved plan. Do not pass TASKs individually from Fable.
 
-Treat the approved `implementation-workflow.md` as immutable. Create `.claude/specs/<slug>/implementation-ledger.md` for runtime state with Red/Green/Refactor evidence, attempt history, validation results, integration evidence, and an exact `## TASK-to-SHA Mapping` table.
+Treat the approved `implementation-workflow.md` as immutable. Create `.vsdd/specs/<slug>/implementation-ledger.md` for runtime state with Red/Green/Refactor evidence, attempt history, validation results, integration evidence, and an exact `## TASK-to-SHA Mapping` table.
 
 Allow at most three attempts per TASK. After the third failure:
 
@@ -41,7 +41,7 @@ Require each implementation commit to name one `TASK-NNN`. Do not mix implementa
 
 Before returning implementation or remediation `COMPLETE`, set every completed TASK row in `progress.md` to `done` with actual start and completion dates, then run bundled runtime command `task-gate --worktree <integration-worktree> --slug <slug>`. Require `status: READY`; treat any mismatch, unfinished attempt, missing/unreachable commit, or parser failure as `BLOCKED`.
 
-Do not leave product code, tests, configuration, or other non-spec files uncommitted. `task-gate` and every downstream review preflight reject uncommitted paths outside `.claude/specs/<slug>/` and `.claude/specs/_steering/`.
+Do not leave product code, tests, configuration, or other non-spec files uncommitted. `task-gate` and every downstream review preflight reject uncommitted paths outside `.vsdd/specs/<slug>/` and `.vsdd/specs/_steering/`.
 
 ## Review remediation
 
