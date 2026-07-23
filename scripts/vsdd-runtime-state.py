@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -18,6 +22,8 @@ from pathlib import Path
 
 PROJECT_AGENT_MARKER = "<!-- ecc-vsdd-generated-agent-proxy:v1 -->"
 MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
+LOCK_TIMEOUT_SECONDS = 10.0
+LOCK_POLL_SECONDS = 0.05
 PROJECT_WORKER_NAMES = {
     "vsdd-code-reviewer.md",
     "vsdd-design-worker.md",
@@ -268,6 +274,7 @@ def bootstrap_run(
     if integration_worktree.exists():
         raise RuntimeBlocked(f"integration worktree path already exists: {integration_worktree}")
 
+    validate_worktree_root(MANAGED_WORKTREE_ROOT)
     result = subprocess.run(
         [
             "git",
@@ -353,6 +360,63 @@ def spec_root(worktree: Path, slug: str) -> Path:
 
 def state_path(worktree: Path, slug: str) -> Path:
     return spec_root(worktree, slug) / "run-state.json"
+
+
+def validate_worktree_root(root: Path) -> None:
+    """Reject a managed worktree root a different local user could pre-seed."""
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeBlocked(f"managed worktree root is not a private directory: {root}")
+    if os.name == "nt":
+        return
+    details = root.stat()
+    if hasattr(os, "getuid") and details.st_uid != os.getuid():
+        raise RuntimeBlocked(f"managed worktree root has a different owner: {root}")
+    if stat.S_IMODE(details.st_mode) & 0o077:
+        try:
+            root.chmod(0o700)
+        except OSError as error:
+            raise RuntimeBlocked(
+                f"cannot restrict managed worktree root permissions: {error}"
+            ) from error
+        if stat.S_IMODE(root.stat().st_mode) & 0o077:
+            raise RuntimeBlocked(f"managed worktree root permissions are too broad: {root}")
+
+
+@contextlib.contextmanager
+def _flock_path(lock_path: Path):
+    """Hold an exclusive advisory lock on a sibling file for a compound state RMW."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeBlocked(
+                        f"timed out waiting for run-state lock: {lock_path}"
+                    )
+                time.sleep(LOCK_POLL_SECONDS)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def state_lock(worktree: Path, slug: str):
+    """Serialize every read-modify-write of one run's run-state.json across processes."""
+    return _flock_path(spec_root(worktree, slug) / ".run-state.lock")
+
+
+def bootstrap_lock(slug: str):
+    """Serialize concurrent bootstrap attempts for the same slug before its worktree exists."""
+    validate_slug(slug)
+    return _flock_path(MANAGED_WORKTREE_ROOT / f".{slug}.bootstrap.lock")
 
 
 def read_state(worktree: Path, slug: str) -> dict:
@@ -1654,46 +1718,58 @@ def main() -> None:
         if args.command == "detect-base":
             result = detect_base(args.repo, args.base)
         elif args.command == "bootstrap":
-            result = bootstrap_run(
-                args.repo,
-                args.slug,
-                args.worktree,
-                args.request,
-                args.until,
-                args.mode,
-                args.base,
-            )
-        elif args.command == "begin-attempt":
-            result = begin_attempt(
-                args.worktree, args.slug, args.scope, task_id=args.task_id
-            )
-        elif args.command == "finish-attempt":
-            result = finish_attempt(
-                args.worktree,
-                args.slug,
-                args.scope,
-                args.attempt,
-                args.outcome,
-                task_id=args.task_id,
-            )
-        elif args.command == "snapshot":
-            result = snapshot_phase(
-                args.worktree, args.slug, args.phase, phase_status=args.phase_status
-            )
-        elif args.command == "audit":
-            result = audit_state(args.worktree, args.slug)
-        elif args.command == "invalidate":
-            result = invalidate_state(
-                args.worktree, args.slug, args.from_phase, args.reason
-            )
-        elif args.command == "task-gate":
-            result = task_gate(args.worktree, args.slug)
-        elif args.command == "complete":
-            result = complete_run(args.worktree, args.slug, args.reached)
-        elif args.command == "extend":
-            result = extend_run(args.worktree, args.slug, args.until)
+            with bootstrap_lock(args.slug):
+                result = bootstrap_run(
+                    args.repo,
+                    args.slug,
+                    args.worktree,
+                    args.request,
+                    args.until,
+                    args.mode,
+                    args.base,
+                )
         else:
-            result = preflight(args.worktree, args.slug, args.phase)
+            # Every other command performs a read-modify-write of one run's
+            # run-state.json. Holding a single process-wide lock for the whole
+            # subcommand call — rather than inside each function — avoids
+            # cross-process lost updates without any risk of the same process
+            # deadlocking on its own lock (audit_state/complete_run/extend_run
+            # call invalidate_state in-process with an already-read state).
+            with state_lock(args.worktree.expanduser().resolve(), args.slug):
+                if args.command == "begin-attempt":
+                    result = begin_attempt(
+                        args.worktree, args.slug, args.scope, task_id=args.task_id
+                    )
+                elif args.command == "finish-attempt":
+                    result = finish_attempt(
+                        args.worktree,
+                        args.slug,
+                        args.scope,
+                        args.attempt,
+                        args.outcome,
+                        task_id=args.task_id,
+                    )
+                elif args.command == "snapshot":
+                    result = snapshot_phase(
+                        args.worktree,
+                        args.slug,
+                        args.phase,
+                        phase_status=args.phase_status,
+                    )
+                elif args.command == "audit":
+                    result = audit_state(args.worktree, args.slug)
+                elif args.command == "invalidate":
+                    result = invalidate_state(
+                        args.worktree, args.slug, args.from_phase, args.reason
+                    )
+                elif args.command == "task-gate":
+                    result = task_gate(args.worktree, args.slug)
+                elif args.command == "complete":
+                    result = complete_run(args.worktree, args.slug, args.reached)
+                elif args.command == "extend":
+                    result = extend_run(args.worktree, args.slug, args.until)
+                else:
+                    result = preflight(args.worktree, args.slug, args.phase)
     except (RuntimeBlocked, OSError) as error:
         print_json({"status": "BLOCKED", "error": str(error)})
         raise SystemExit(1)

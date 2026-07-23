@@ -4,11 +4,13 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -703,6 +705,95 @@ class LaunchWorkerTest(unittest.TestCase):
         updated = runtime.read_state(root, "sample")
         self.assertEqual(updated["implementation_session_id"], output["session_id"])
         self.assertTrue((spec / "implementation-workflow.md").is_file())
+
+    def test_supervisor_wait_timeout_marks_evidence_blocked_instead_of_orphaning(
+        self,
+    ) -> None:
+        evidence = Path(tempfile.mkdtemp(prefix="ecc-vsdd-supervise-wait-")) / "plan-x.json"
+        evidence.write_text(
+            json.dumps({"status": "PREPARING", "stage": "plan", "slug": "sample"}),
+            encoding="utf-8",
+        )
+        with mock.patch.object(launcher.time, "sleep"):
+            launcher.supervise_detached_launcher(evidence)
+        record = launcher.read_json(evidence)
+        self.assertEqual(record["status"], "BLOCKED")
+        self.assertIn("timed out waiting", record["result"]["error"])
+
+    def test_running_supervisor_reclaims_stale_preparing_records(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-stale-preparing-"))
+        stale = directory / "plan-stale.json"
+        stale.write_text(
+            json.dumps(
+                {
+                    "status": "PREPARING",
+                    "started_at": (
+                        datetime.now(timezone.utc)
+                        - timedelta(seconds=launcher.STALE_PREPARING_SECONDS + 5)
+                    ).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        fresh = directory / "plan-fresh.json"
+        fresh.write_text(
+            json.dumps(
+                {"status": "PREPARING", "started_at": datetime.now(timezone.utc).isoformat()}
+            ),
+            encoding="utf-8",
+        )
+        self.assertIsNone(launcher.running_supervisor(directory, "plan"))
+        self.assertEqual(launcher.read_json(stale)["status"], "BLOCKED")
+        self.assertIn(
+            "never reached RUNNING", launcher.read_json(stale)["result"]["error"]
+        )
+        self.assertEqual(launcher.read_json(fresh)["status"], "PREPARING")
+
+    def test_evidence_writers_restrict_permissions_to_owner(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-evidence-perms-"))
+
+        atomic_path = directory / "supervisor.json"
+        launcher.write_json_atomic(atomic_path, {"status": "RUNNING"})
+        self.assertEqual(stat.S_IMODE(atomic_path.stat().st_mode), 0o600)
+
+        private_path = directory / "session.json"
+        launcher.write_json_private(private_path, {"status": "RUNNING"})
+        self.assertEqual(stat.S_IMODE(private_path.stat().st_mode), 0o600)
+        launcher.write_json_private(private_path, {"status": "FINISHED"})
+        self.assertEqual(stat.S_IMODE(private_path.stat().st_mode), 0o600)
+        self.assertEqual(launcher.read_json(private_path)["status"], "FINISHED")
+
+    def test_state_lock_serializes_concurrent_holders(self) -> None:
+        state_path = Path(tempfile.mkdtemp(prefix="ecc-vsdd-bind-lock-")) / "run-state.json"
+        state_path.write_text(json.dumps({"implementation_session_id": None}), encoding="utf-8")
+        original_timeout = launcher.LOCK_TIMEOUT_SECONDS
+        launcher.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, launcher, "LOCK_TIMEOUT_SECONDS", original_timeout)
+        with launcher._state_lock(state_path):
+            self.assertIn(
+                "timed out waiting",
+                self.assert_blocked(
+                    lambda: launcher.bind_implementation_session(state_path, "x")
+                ),
+            )
+        launcher.bind_implementation_session(state_path, "x")
+        self.assertEqual(launcher.read_json(state_path)["implementation_session_id"], "x")
+
+    def test_validate_worktree_root_tightens_permissions_and_rejects_symlink(
+        self,
+    ) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-launch-worktree-root-"))
+        directory.chmod(0o777)
+        launcher.validate_worktree_root(directory)
+        self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+        parent = Path(tempfile.mkdtemp(prefix="ecc-vsdd-launch-worktree-root-parent-"))
+        link = parent / "link"
+        link.symlink_to(directory)
+        self.assertIn(
+            "not a private directory",
+            self.assert_blocked(lambda: launcher.validate_worktree_root(link)),
+        )
 
 
 if __name__ == "__main__":

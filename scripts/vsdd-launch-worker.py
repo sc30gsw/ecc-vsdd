@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -20,6 +23,8 @@ from pathlib import Path
 
 MIN_CLAUDE_VERSION = (2, 1, 214)
 MANAGED_WORKTREE_ROOT = Path("/tmp/vsdd-worktrees")
+LOCK_TIMEOUT_SECONDS = 10.0
+LOCK_POLL_SECONDS = 0.05
 IMPLEMENTATION_CAPABILITY_ENV = "ECC_VSDD_IMPLEMENTATION_CAPABILITY"
 IMPLEMENTATION_WORKTREE_ENV = "ECC_VSDD_IMPLEMENTATION_WORKTREE"
 IMPLEMENTATION_TASK_ROOT_ENV = "ECC_VSDD_IMPLEMENTATION_TASK_ROOT"
@@ -59,14 +64,48 @@ def read_json(path: Path) -> dict:
 
 
 def write_json_atomic(path: Path, value: dict) -> None:
+    """Persist supervisor evidence (may hold worker stdout/stderr) as owner-only."""
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     try:
-        temporary.write_text(
-            json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(descriptor, payload)
+        finally:
+            os.close(descriptor)
         os.replace(temporary, path)
     except OSError as error:
         fail(f"cannot persist {path}: {error}")
+
+
+def write_json_private(path: Path, value: dict) -> None:
+    """Overwrite session evidence (may hold worker stdout/stderr) as owner-only."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(
+            descriptor,
+            (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+    finally:
+        os.close(descriptor)
+
+
+def validate_worktree_root(root: Path) -> None:
+    """Reject a managed worktree root a different local user could pre-seed."""
+    if root.is_symlink() or not root.is_dir():
+        fail(f"managed worktree root is not a private directory: {root}")
+    if os.name == "nt":
+        return
+    details = root.stat()
+    if hasattr(os, "getuid") and details.st_uid != os.getuid():
+        fail(f"managed worktree root has a different owner: {root}")
+    if stat.S_IMODE(details.st_mode) & 0o077:
+        try:
+            root.chmod(0o700)
+        except OSError as error:
+            fail(f"cannot restrict managed worktree root permissions: {error}")
+        if stat.S_IMODE(root.stat().st_mode) & 0o077:
+            fail(f"managed worktree root permissions are too broad: {root}")
 
 
 def process_alive(pid: object) -> bool:
@@ -82,12 +121,39 @@ def process_alive(pid: object) -> bool:
     return True
 
 
+STALE_PREPARING_SECONDS = 30
+
+
 def running_supervisor(supervisors_dir: Path, stage: str) -> tuple[Path, dict] | None:
     """Return the one live supervisor for a stage, rejecting ambiguous state."""
     running: list[tuple[Path, dict]] = []
+    now = datetime.now(timezone.utc)
     for path in sorted(supervisors_dir.glob(f"{stage}-*.json")):
         record = read_json(path)
-        if record.get("status") != "RUNNING":
+        status = record.get("status")
+        if status == "PREPARING":
+            try:
+                started_at = datetime.fromisoformat(str(record.get("started_at")))
+            except ValueError:
+                started_at = None
+            age = (now - started_at).total_seconds() if started_at else None
+            if age is None or age >= STALE_PREPARING_SECONDS:
+                record.update(
+                    {
+                        "status": "BLOCKED",
+                        "finished_at": now.isoformat(),
+                        "result": {
+                            "status": "BLOCKED",
+                            "error": (
+                                "detached launcher supervisor never reached "
+                                "RUNNING status"
+                            ),
+                        },
+                    }
+                )
+                write_json_atomic(path, record)
+            continue
+        if status != "RUNNING":
             continue
         if process_alive(record.get("pid")):
             running.append((path, record))
@@ -95,7 +161,7 @@ def running_supervisor(supervisors_dir: Path, stage: str) -> tuple[Path, dict] |
         record.update(
             {
                 "status": "BLOCKED",
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": now.isoformat(),
                 "result": {
                     "status": "BLOCKED",
                     "error": "detached launcher supervisor exited without a result",
@@ -134,6 +200,21 @@ def supervise_detached_launcher(evidence: Path) -> None:
             break
         time.sleep(0.01)
     else:
+        stale = read_json(evidence)
+        stale.update(
+            {
+                "status": "BLOCKED",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "result": {
+                    "status": "BLOCKED",
+                    "error": (
+                        "detached launcher supervisor timed out waiting for the "
+                        "launching process to confirm RUNNING status"
+                    ),
+                },
+            }
+        )
+        write_json_atomic(evidence, stale)
         return
 
     command = record.get("command")
@@ -636,21 +717,46 @@ def task_integrity_issue(
     return None
 
 
-def bind_implementation_session(state_path: Path, session_id: str) -> None:
-    state = read_json(state_path)
-    current = state.get("implementation_session_id")
-    if current not in {None, session_id}:
-        fail("cannot replace the implementation session bound in run-state")
-    state["implementation_session_id"] = session_id
-    state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    temporary = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.tmp")
+@contextlib.contextmanager
+def _state_lock(state_path: Path):
+    """Hold the same advisory lock vsdd-runtime-state.py uses for this run-state.json."""
+    lock_path = state_path.with_name(".run-state.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        temporary.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        os.replace(temporary, state_path)
-    except OSError as error:
-        fail(f"cannot persist implementation session binding: {error}")
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    fail(f"timed out waiting for run-state lock: {lock_path}")
+                time.sleep(LOCK_POLL_SECONDS)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def bind_implementation_session(state_path: Path, session_id: str) -> None:
+    with _state_lock(state_path):
+        state = read_json(state_path)
+        current = state.get("implementation_session_id")
+        if current not in {None, session_id}:
+            fail("cannot replace the implementation session bound in run-state")
+        state["implementation_session_id"] = session_id
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        temporary = state_path.with_name(f".{state_path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            os.replace(temporary, state_path)
+        except OSError as error:
+            fail(f"cannot persist implementation session binding: {error}")
 
 
 def worker_result(response: object) -> dict | None:
@@ -826,6 +932,7 @@ def main() -> None:
         managed_root = worktree.parent.resolve()
     if not managed_root.is_dir():
         fail(f"managed worktree root does not exist: {managed_root}")
+    validate_worktree_root(managed_root)
     task_worktree_root = managed_root / ".tasks" / args.slug
     try:
         task_worktree_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1042,9 +1149,7 @@ def main() -> None:
         "started_from_session": args.session_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
-    record_path.write_text(
-        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json_private(record_path, record)
 
     env = worker_environment(worktree, args.slug, task_worktree_root)
     try:
@@ -1059,9 +1164,7 @@ def main() -> None:
     except KeyboardInterrupt:
         record["status"] = "INTERRUPTED"
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
-        record_path.write_text(
-            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        write_json_private(record_path, record)
         fail(
             "Claude worker interrupted; resume with session "
             f"{launched_session_id}; evidence: {record_path}"
@@ -1070,9 +1173,7 @@ def main() -> None:
         record["status"] = "FAILED"
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
         record["error"] = str(error)
-        record_path.write_text(
-            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        write_json_private(record_path, record)
         fail(f"cannot launch Claude worker; evidence: {record_path}")
 
     unexpected: list[str] = []
@@ -1114,16 +1215,12 @@ def main() -> None:
             "response": response,
         }
     )
-    record_path.write_text(
-        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json_private(record_path, record)
 
     def block_after_run(message: str) -> None:
         record["status"] = "BLOCKED"
         record["validation_error"] = message
-        record_path.write_text(
-            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        write_json_private(record_path, record)
         fail(f"{message}; evidence: {record_path}")
 
     session_id = response.get("session_id") if isinstance(response, dict) else None

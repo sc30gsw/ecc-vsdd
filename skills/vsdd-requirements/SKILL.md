@@ -66,7 +66,7 @@ Read every path in `run-state.json.source_paths`, including `source-notion.md` o
 
 Engineer-led. The AI presents a scaffold and assists completions.
 
-1. Copy the template from `.claude/skills/vsdd-requirements/templates/requirements.md` to `.vsdd/specs/<slug>/requirements.md` (do not overwrite if requirements.md already has real content — ask first).
+1. Copy the template bundled with this skill (`templates/requirements.md`) to `.vsdd/specs/<slug>/requirements.md` (do not overwrite if requirements.md already has real content — ask first).
 2. Display the scaffold to the user.
 3. Offer to help fill in individual REQ blocks:
    - "Tell me about the first user story and I'll draft the EARS format for you."

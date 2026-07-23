@@ -3,7 +3,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -1238,6 +1240,87 @@ class RuntimeStateTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(runtime.RuntimeBlocked, "phase status"):
             runtime.snapshot_phase(root, "sample", "requirements-review")
+
+    def test_state_lock_serializes_concurrent_holders(self) -> None:
+        root, spec = self.make_spec()
+        self.write_run_state(root, spec)
+        original_timeout = runtime.LOCK_TIMEOUT_SECONDS
+        runtime.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, runtime, "LOCK_TIMEOUT_SECONDS", original_timeout)
+        with runtime.state_lock(root, "sample"):
+            with self.assertRaisesRegex(runtime.RuntimeBlocked, "timed out waiting"):
+                with runtime.state_lock(root, "sample"):
+                    pass
+        # Released: a fresh acquisition now succeeds immediately.
+        with runtime.state_lock(root, "sample"):
+            pass
+
+    def test_bootstrap_lock_serializes_same_slug(self) -> None:
+        runtime.MANAGED_WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
+        lock_path = runtime.MANAGED_WORKTREE_ROOT / ".lock-test-slug.bootstrap.lock"
+        self.addCleanup(lock_path.unlink, missing_ok=True)
+        original_timeout = runtime.LOCK_TIMEOUT_SECONDS
+        runtime.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, runtime, "LOCK_TIMEOUT_SECONDS", original_timeout)
+        with runtime.bootstrap_lock("lock-test-slug"):
+            with self.assertRaisesRegex(runtime.RuntimeBlocked, "timed out waiting"):
+                with runtime.bootstrap_lock("lock-test-slug"):
+                    pass
+
+    def test_cli_dispatch_holds_state_lock_for_the_whole_subcommand(self) -> None:
+        root, spec = self.make_spec()
+        self.write_run_state(root, spec)
+        original_argv = sys.argv
+        original_timeout = runtime.LOCK_TIMEOUT_SECONDS
+        runtime.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, sys, "argv", original_argv)
+        self.addCleanup(setattr, runtime, "LOCK_TIMEOUT_SECONDS", original_timeout)
+        sys.argv = [
+            "vsdd-runtime-state.py",
+            "begin-attempt",
+            "--worktree",
+            str(root),
+            "--slug",
+            "sample",
+            "--scope",
+            "requirements-review",
+        ]
+        with runtime.state_lock(root, "sample"):
+            with self.assertRaises(SystemExit):
+                runtime.main()
+        # The CLI releases its lock once it exits; a direct call now succeeds,
+        # proving the earlier failure came from lock contention, not a bug.
+        runtime.begin_attempt(root, "sample", "requirements-review")
+
+    def test_validate_worktree_root_tightens_permissions_and_rejects_symlink(
+        self,
+    ) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-worktree-root-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        directory.chmod(0o777)
+        runtime.validate_worktree_root(directory)
+        self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+        parent = Path(tempfile.mkdtemp(prefix="ecc-vsdd-worktree-root-parent-"))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        link = parent / "link"
+        link.symlink_to(directory)
+        with self.assertRaisesRegex(runtime.RuntimeBlocked, "not a private directory"):
+            runtime.validate_worktree_root(link)
+
+    def test_bootstrap_validates_worktree_root_permissions(self) -> None:
+        source = self.make_repo()
+        worktree = self.managed_worktree(source)
+        runtime.MANAGED_WORKTREE_ROOT.chmod(0o777)
+        try:
+            runtime.bootstrap_run(
+                source, "sample", worktree, "fixture request", "review", "auto", None
+            )
+        finally:
+            pass
+        self.assertEqual(
+            stat.S_IMODE(runtime.MANAGED_WORKTREE_ROOT.stat().st_mode), 0o700
+        )
 
 
 if __name__ == "__main__":
