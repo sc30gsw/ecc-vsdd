@@ -749,19 +749,15 @@ class LaunchWorkerTest(unittest.TestCase):
         )
         self.assertEqual(launcher.read_json(fresh)["status"], "PREPARING")
 
-    def test_evidence_writers_restrict_permissions_to_owner(self) -> None:
+    def test_evidence_writer_restricts_permissions_to_owner(self) -> None:
         directory = Path(tempfile.mkdtemp(prefix="ecc-vsdd-evidence-perms-"))
 
         atomic_path = directory / "supervisor.json"
         launcher.write_json_atomic(atomic_path, {"status": "RUNNING"})
         self.assertEqual(stat.S_IMODE(atomic_path.stat().st_mode), 0o600)
-
-        private_path = directory / "session.json"
-        launcher.write_json_private(private_path, {"status": "RUNNING"})
-        self.assertEqual(stat.S_IMODE(private_path.stat().st_mode), 0o600)
-        launcher.write_json_private(private_path, {"status": "FINISHED"})
-        self.assertEqual(stat.S_IMODE(private_path.stat().st_mode), 0o600)
-        self.assertEqual(launcher.read_json(private_path)["status"], "FINISHED")
+        launcher.write_json_atomic(atomic_path, {"status": "FINISHED"})
+        self.assertEqual(stat.S_IMODE(atomic_path.stat().st_mode), 0o600)
+        self.assertEqual(launcher.read_json(atomic_path)["status"], "FINISHED")
 
     def test_state_lock_serializes_concurrent_holders(self) -> None:
         state_path = Path(tempfile.mkdtemp(prefix="ecc-vsdd-bind-lock-")) / "run-state.json"

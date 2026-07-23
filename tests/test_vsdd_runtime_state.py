@@ -1308,6 +1308,52 @@ class RuntimeStateTest(unittest.TestCase):
         with self.assertRaisesRegex(runtime.RuntimeBlocked, "not a private directory"):
             runtime.validate_worktree_root(link)
 
+    def test_concurrent_cli_processes_do_not_lose_ledger_updates(self) -> None:
+        root, spec = self.make_spec()
+        self.write_run_state(root, spec)
+        scopes = ("requirements-review", "plan-review")
+        processes = [
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "begin-attempt",
+                    "--worktree",
+                    str(root),
+                    "--slug",
+                    "sample",
+                    "--scope",
+                    scope,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for scope in scopes
+        ]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=30)
+            self.assertEqual(process.returncode, 0, stdout + stderr)
+        state = runtime.read_state(root, "sample")
+        for scope in scopes:
+            self.assertEqual(
+                state["attempt_ledger"][scope]["attempts_started"],
+                1,
+                f"lost update for {scope}: {state['attempt_ledger']}",
+            )
+
+    def test_bootstrap_lock_creates_root_private_before_lock_file(self) -> None:
+        original_root = runtime.MANAGED_WORKTREE_ROOT
+        scratch = Path(tempfile.mkdtemp(prefix="ecc-vsdd-bootstrap-lock-root-"))
+        runtime.MANAGED_WORKTREE_ROOT = scratch / "worktrees"
+        self.addCleanup(setattr, runtime, "MANAGED_WORKTREE_ROOT", original_root)
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        with runtime.bootstrap_lock("sample"):
+            pass
+        self.assertEqual(
+            stat.S_IMODE(runtime.MANAGED_WORKTREE_ROOT.stat().st_mode), 0o700
+        )
+
     def test_bootstrap_validates_worktree_root_permissions(self) -> None:
         source = self.make_repo()
         worktree = self.managed_worktree(source)

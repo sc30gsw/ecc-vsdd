@@ -64,34 +64,24 @@ def read_json(path: Path) -> dict:
 
 
 def write_json_atomic(path: Path, value: dict) -> None:
-    """Persist supervisor evidence (may hold worker stdout/stderr) as owner-only."""
+    """Persist worker evidence (may hold worker stdout/stderr) as owner-only."""
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            os.write(descriptor, payload)
-        finally:
-            os.close(descriptor)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
         os.replace(temporary, path)
     except OSError as error:
         fail(f"cannot persist {path}: {error}")
 
 
-def write_json_private(path: Path, value: dict) -> None:
-    """Overwrite session evidence (may hold worker stdout/stderr) as owner-only."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(
-            descriptor,
-            (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
-        )
-    finally:
-        os.close(descriptor)
-
-
 def validate_worktree_root(root: Path) -> None:
-    """Reject a managed worktree root a different local user could pre-seed."""
+    """Reject a managed worktree root a different local user could pre-seed.
+
+    Unlike the vsdd-runtime-state.py variant, this one never creates the
+    directory: by launch time the root must already exist from bootstrap.
+    """
     if root.is_symlink() or not root.is_dir():
         fail(f"managed worktree root is not a private directory: {root}")
     if os.name == "nt":
@@ -200,22 +190,26 @@ def supervise_detached_launcher(evidence: Path) -> None:
             break
         time.sleep(0.01)
     else:
-        stale = read_json(evidence)
-        stale.update(
-            {
-                "status": "BLOCKED",
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-                "result": {
+        # Re-check before declaring the handshake dead: the launching process
+        # may have written RUNNING between the last poll and now, and blindly
+        # writing BLOCKED here would clobber that live record.
+        record = read_json(evidence)
+        if record.get("status") != "RUNNING":
+            record.update(
+                {
                     "status": "BLOCKED",
-                    "error": (
-                        "detached launcher supervisor timed out waiting for the "
-                        "launching process to confirm RUNNING status"
-                    ),
-                },
-            }
-        )
-        write_json_atomic(evidence, stale)
-        return
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "result": {
+                        "status": "BLOCKED",
+                        "error": (
+                            "detached launcher supervisor timed out waiting for the "
+                            "launching process to confirm RUNNING status"
+                        ),
+                    },
+                }
+            )
+            write_json_atomic(evidence, record)
+            return
 
     command = record.get("command")
     worktree = record.get("worktree")
@@ -1117,6 +1111,21 @@ def main() -> None:
             )
             write_json_atomic(supervisor_path, supervisor)
             fail(f"cannot start detached launcher supervisor: {error}")
+        current = read_json(supervisor_path)
+        if current.get("status") != "PREPARING":
+            # Another process (stale-PREPARING reclaim or the supervisor's own
+            # handshake timeout) already finalized this record while we were
+            # spawning; resurrecting it to RUNNING would hide that verdict.
+            detail = (
+                current.get("result", {}).get("error")
+                if isinstance(current.get("result"), dict)
+                else None
+            )
+            fail(
+                "detached launcher supervisor record was finalized as "
+                f"{current.get('status')!r} before launch completed"
+                + (f": {detail}" if detail else "")
+            )
         supervisor.update({"status": "RUNNING", "pid": process.pid})
         write_json_atomic(supervisor_path, supervisor)
         print(
@@ -1149,7 +1158,7 @@ def main() -> None:
         "started_from_session": args.session_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
-    write_json_private(record_path, record)
+    write_json_atomic(record_path, record)
 
     env = worker_environment(worktree, args.slug, task_worktree_root)
     try:
@@ -1164,7 +1173,7 @@ def main() -> None:
     except KeyboardInterrupt:
         record["status"] = "INTERRUPTED"
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
-        write_json_private(record_path, record)
+        write_json_atomic(record_path, record)
         fail(
             "Claude worker interrupted; resume with session "
             f"{launched_session_id}; evidence: {record_path}"
@@ -1173,7 +1182,7 @@ def main() -> None:
         record["status"] = "FAILED"
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
         record["error"] = str(error)
-        write_json_private(record_path, record)
+        write_json_atomic(record_path, record)
         fail(f"cannot launch Claude worker; evidence: {record_path}")
 
     unexpected: list[str] = []
@@ -1215,12 +1224,12 @@ def main() -> None:
             "response": response,
         }
     )
-    write_json_private(record_path, record)
+    write_json_atomic(record_path, record)
 
     def block_after_run(message: str) -> None:
         record["status"] = "BLOCKED"
         record["validation_error"] = message
-        write_json_private(record_path, record)
+        write_json_atomic(record_path, record)
         fail(f"{message}; evidence: {record_path}")
 
     session_id = response.get("session_id") if isinstance(response, dict) else None

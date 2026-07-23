@@ -416,6 +416,10 @@ def state_lock(worktree: Path, slug: str):
 def bootstrap_lock(slug: str):
     """Serialize concurrent bootstrap attempts for the same slug before its worktree exists."""
     validate_slug(slug)
+    # The lock file lives directly under MANAGED_WORKTREE_ROOT, so the root must
+    # be created 0o700 and ownership-checked BEFORE _flock_path's mkdir can
+    # create it with a umask-dependent mode on first use.
+    validate_worktree_root(MANAGED_WORKTREE_ROOT)
     return _flock_path(MANAGED_WORKTREE_ROOT / f".{slug}.bootstrap.lock")
 
 
